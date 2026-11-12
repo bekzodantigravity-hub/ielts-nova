@@ -17,15 +17,21 @@ export interface AuthUser {
   exp: number;
 }
 
-const DEV_FALLBACK_SECRET =
-  "ielts-nova-cdi-suite-local-hmac-sha256-signing-secret-2026";
+declare global {
+  // eslint-disable-next-line no-var
+  var __transientAuthSessionSecret: string | undefined;
+}
 
 function getSigningSecret(): string {
   const envSecret = process.env.AUTH_SESSION_SECRET;
   if (envSecret && envSecret.trim().length >= 16) {
     return envSecret.trim();
   }
-  return DEV_FALLBACK_SECRET;
+  // If not configured via environment variables, use a dynamic runtime in-memory secret
+  if (!globalThis.__transientAuthSessionSecret) {
+    globalThis.__transientAuthSessionSecret = `transient-${crypto.randomUUID()}-${Date.now()}`;
+  }
+  return globalThis.__transientAuthSessionSecret;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
