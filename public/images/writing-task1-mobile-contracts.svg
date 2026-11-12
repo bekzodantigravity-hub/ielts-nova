@@ -1,0 +1,198 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img" aria-labelledby="chart-title chart-desc">
+  <title id="chart-title">Average monthly cost of mobile phone contracts (January – September 2002)</title>
+  <desc id="chart-desc">Line graph comparing average monthly mobile phone contract costs in euros for Demo, Lex, Sim TX, and Alpha from January to September 2002.</desc>
+
+  <!-- Crisp Academic Card Background -->
+  <rect x="0" y="0" width="960" height="540" rx="16" fill="#FFFFFF" />
+  <rect x="1" y="1" width="958" height="538" rx="15" fill="none" stroke="#E2E8F0" stroke-width="1.5" />
+
+  <!-- Top Academic Pill & Title -->
+  <rect x="378" y="20" width="204" height="24" rx="12" fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1" />
+  <text x="480" y="36" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="11" font-weight="700" letter-spacing="1.4" fill="#047857">IELTS NOVA · TASK 1 LINE</text>
+
+  <text x="480" y="72" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="800" fill="#0F172A">Average monthly cost of mobile phone contracts</text>
+  <text x="480" y="95" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#64748B">Four contract plans in a European country (January – September 2002, in euros)</text>
+
+  <!-- Subtle Horizontal Dashed Gridlines (y = 440 - val * 10; 0..30 => 440..140) -->
+  <g stroke="#CBD5E1" stroke-width="1" stroke-dasharray="4 4">
+    <line x1="95" y1="140" x2="780" y2="140" />
+    <line x1="95" y1="190" x2="780" y2="190" />
+    <line x1="95" y1="240" x2="780" y2="240" />
+    <line x1="95" y1="290" x2="780" y2="290" />
+    <line x1="95" y1="340" x2="780" y2="340" />
+    <line x1="95" y1="390" x2="780" y2="390" />
+  </g>
+
+  <!-- Y-Axis Labels & Ticks -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13" font-weight="600" fill="#475569" text-anchor="end">
+    <text x="82" y="145">30</text>
+    <text x="82" y="195">25</text>
+    <text x="82" y="245">20</text>
+    <text x="82" y="295">15</text>
+    <text x="82" y="345">10</text>
+    <text x="82" y="395">5</text>
+    <text x="82" y="445">0</text>
+  </g>
+  <g stroke="#334155" stroke-width="1.5">
+    <line x1="90" y1="140" x2="95" y2="140" />
+    <line x1="90" y1="190" x2="95" y2="190" />
+    <line x1="90" y1="240" x2="95" y2="240" />
+    <line x1="90" y1="290" x2="95" y2="290" />
+    <line x1="90" y1="340" x2="95" y2="340" />
+    <line x1="90" y1="390" x2="95" y2="390" />
+    <line x1="90" y1="440" x2="95" y2="440" />
+  </g>
+
+  <!-- Y-Axis Title -->
+  <text x="36" y="290" text-anchor="middle" transform="rotate(-90 36 290)" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" letter-spacing="0.8" fill="#64748B">COST (EURO)</text>
+
+  <!-- Primary Axes -->
+  <line x1="95" y1="140" x2="95" y2="440" stroke="#334155" stroke-width="2" />
+  <line x1="95" y1="440" x2="780" y2="440" stroke="#334155" stroke-width="2" />
+
+  <!-- X-Axis Ticks & Month Labels -->
+  <g stroke="#334155" stroke-width="1.5">
+    <line x1="125" y1="440" x2="125" y2="446" />
+    <line x1="204" y1="440" x2="204" y2="446" />
+    <line x1="283" y1="440" x2="283" y2="446" />
+    <line x1="362" y1="440" x2="362" y2="446" />
+    <line x1="441" y1="440" x2="441" y2="446" />
+    <line x1="520" y1="440" x2="520" y2="446" />
+    <line x1="599" y1="440" x2="599" y2="446" />
+    <line x1="678" y1="440" x2="678" y2="446" />
+    <line x1="757" y1="440" x2="757" y2="446" />
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#0F172A" text-anchor="middle">
+    <text x="125" y="472">Jan</text>
+    <text x="204" y="472">Feb</text>
+    <text x="283" y="472">Mar</text>
+    <text x="362" y="472">Apr</text>
+    <text x="441" y="472">May</text>
+    <text x="520" y="472">Jun</text>
+    <text x="599" y="472">Jul</text>
+    <text x="678" y="472">Aug</text>
+    <text x="757" y="472">Sep</text>
+  </g>
+  <text x="441" y="502" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="700" letter-spacing="1" fill="#64748B">MONTHS (2002)</text>
+
+  <!-- Series 4: Alpha (Cool Slate Gray #64748B, dashed) -->
+  <polyline
+    fill="none"
+    stroke="#64748B"
+    stroke-width="2.5"
+    stroke-dasharray="6 4"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    points="125,350 204,363 283,352 362,340 441,331 520,300 599,340 678,353 757,362"
+  />
+
+  <!-- Series 3: Sim TX (Emerald Green #10B981, solid) -->
+  <polyline
+    fill="none"
+    stroke="#10B981"
+    stroke-width="3"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    points="125,390 204,390 283,380 362,370 441,380 520,390 599,340 678,310 757,190"
+  />
+
+  <!-- Series 2: Lex (Academic Sky-Blue #0284C7, solid) -->
+  <polyline
+    fill="none"
+    stroke="#0284C7"
+    stroke-width="3"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    points="125,320 204,340 283,311 362,311 441,300 520,311 599,280 678,280 757,259"
+  />
+
+  <!-- Series 1: Demo (Midnight Slate #0F172A, solid) -->
+  <polyline
+    fill="none"
+    stroke="#0F172A"
+    stroke-width="3"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    points="125,290 204,280 283,269 362,280 441,240 520,240 599,190 678,202 757,215"
+  />
+
+  <!-- Data Point Markers (Drawn last for crisp intersections) -->
+  <!-- Sim TX Markers (#10B981) -->
+  <g fill="#10B981" stroke="#FFFFFF" stroke-width="1.5">
+    <circle cx="125" cy="390" r="5" />
+    <circle cx="204" cy="390" r="5" />
+    <circle cx="283" cy="380" r="5" />
+    <circle cx="362" cy="370" r="5" />
+    <circle cx="441" cy="380" r="5" />
+    <circle cx="520" cy="390" r="5" />
+    <circle cx="599" cy="340" r="6.5" />
+    <circle cx="678" cy="310" r="5" />
+    <circle cx="757" cy="190" r="5.5" />
+  </g>
+
+  <!-- Alpha Markers (#64748B; Jul sits centered cleanly over Sim TX ring) -->
+  <g fill="#64748B" stroke="#FFFFFF" stroke-width="1.5">
+    <circle cx="125" cy="350" r="4.5" />
+    <circle cx="204" cy="363" r="4.5" />
+    <circle cx="283" cy="352" r="4.5" />
+    <circle cx="362" cy="340" r="4.5" />
+    <circle cx="441" cy="331" r="4.5" />
+    <circle cx="520" cy="300" r="4.5" />
+    <circle cx="599" cy="340" r="3.5" stroke-width="1" />
+    <circle cx="678" cy="353" r="4.5" />
+    <circle cx="757" cy="362" r="4.5" />
+  </g>
+
+  <!-- Lex Markers (#0284C7) -->
+  <g fill="#0284C7" stroke="#FFFFFF" stroke-width="1.5">
+    <circle cx="125" cy="320" r="5" />
+    <circle cx="204" cy="340" r="5" />
+    <circle cx="283" cy="311" r="5" />
+    <circle cx="362" cy="311" r="5" />
+    <circle cx="441" cy="300" r="5" />
+    <circle cx="520" cy="311" r="5" />
+    <circle cx="599" cy="280" r="5" />
+    <circle cx="678" cy="280" r="5" />
+    <circle cx="757" cy="259" r="5" />
+  </g>
+
+  <!-- Demo Markers (#0F172A) -->
+  <g fill="#0F172A" stroke="#FFFFFF" stroke-width="1.5">
+    <circle cx="125" cy="290" r="5" />
+    <circle cx="204" cy="280" r="5" />
+    <circle cx="283" cy="269" r="5" />
+    <circle cx="362" cy="280" r="5" />
+    <circle cx="441" cy="240" r="5" />
+    <circle cx="520" cy="240" r="5" />
+    <circle cx="599" cy="190" r="5.5" />
+    <circle cx="678" cy="202" r="5" />
+    <circle cx="757" cy="215" r="5" />
+  </g>
+
+  <!-- Right-side Clean Legend Panel -->
+  <g transform="translate(796, 212)">
+    <rect x="0" y="0" width="142" height="148" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+    <text x="16" y="24" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="700" letter-spacing="1" fill="#64748B">PLANS (2002)</text>
+
+    <!-- Demo -->
+    <line x1="16" y1="48" x2="40" y2="48" stroke="#0F172A" stroke-width="3" />
+    <circle cx="28" cy="48" r="4.5" fill="#0F172A" stroke="#FFFFFF" stroke-width="1.2" />
+    <text x="50" y="52" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#0F172A">Demo</text>
+
+    <!-- Lex -->
+    <line x1="16" y1="76" x2="40" y2="76" stroke="#0284C7" stroke-width="3" />
+    <circle cx="28" cy="76" r="4.5" fill="#0284C7" stroke="#FFFFFF" stroke-width="1.2" />
+    <text x="50" y="80" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#0F172A">Lex</text>
+
+    <!-- Sim TX -->
+    <line x1="16" y1="104" x2="40" y2="104" stroke="#10B981" stroke-width="3" />
+    <circle cx="28" cy="104" r="4.5" fill="#10B981" stroke="#FFFFFF" stroke-width="1.2" />
+    <text x="50" y="108" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#047857">Sim TX</text>
+
+    <!-- Alpha -->
+    <line x1="16" y1="132" x2="40" y2="132" stroke="#64748B" stroke-width="2.5" stroke-dasharray="4 3" />
+    <circle cx="28" cy="132" r="4.5" fill="#64748B" stroke="#FFFFFF" stroke-width="1.2" />
+    <text x="50" y="136" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" fill="#475569">Alpha</text>
+  </g>
+
+</svg>
