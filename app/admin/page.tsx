@@ -392,25 +392,26 @@ export default function AdminPanelPage() {
                   Shaxsiy Adminlar Paneli
                 </h1>
                 <p className="mt-1.5 text-xs text-zinc-400">
-                  Foydalanuvchilar, email, parol, telefon raqam va paketlarni boshqarish uchun admin hisobingiz bilan kiring.
+                  Admin panelga kirish uchun login va parolingizni kiriting.
                 </p>
               </div>
 
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-zinc-300">
-                    Admin Login (Email)
+                    Login
                   </label>
                   <div className="relative mt-1.5">
-                    <Mail className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/80" />
+                    <User className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/80" />
                     <input
-                      type="email"
+                      type="text"
                       data-testid="admin-login-email"
                       required
                       autoFocus
+                      autoComplete="username"
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="admin@gmail.com"
+                      placeholder="Login"
                       className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-3 pr-4 pl-10 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
                     />
                   </div>
@@ -418,7 +419,7 @@ export default function AdminPanelPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-zinc-300">
-                    Admin Paroli
+                    Parol
                   </label>
                   <div className="relative mt-1.5">
                     <Lock className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/80" />
@@ -426,9 +427,10 @@ export default function AdminPanelPage() {
                       type={showLoginPass ? "text" : "password"}
                       data-testid="admin-login-password"
                       required
+                      autoComplete="current-password"
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="Parolni kiriting"
+                      placeholder="Parol"
                       className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-3 pr-10 pl-10 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
                     />
                     <button

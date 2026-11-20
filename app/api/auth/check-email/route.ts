@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { getAdminEmail } from "@/lib/auth-token";
+import { isAdminEmail } from "@/lib/auth-token";
 import { findUserByEmail } from "@/lib/users-db";
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     }
 
     const exists =
-      Boolean(findUserByEmail(rawEmail)) || rawEmail === getAdminEmail();
+      Boolean(findUserByEmail(rawEmail)) || (await isAdminEmail(rawEmail));
     return NextResponse.json({ exists });
   } catch {
     return NextResponse.json(

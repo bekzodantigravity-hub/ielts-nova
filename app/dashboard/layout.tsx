@@ -33,7 +33,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const state = useAppState();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
   const lang: Lang = state.lang;
@@ -57,13 +56,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       };
       if (data.authenticated && data.user) {
         actions.setAuthUser(data.user);
-        setIsAdmin(Boolean(data.isAdmin || data.user.role === "admin"));
         setAuthChecked(true);
         return;
       }
       // Strictly reject unauthenticated sessions (never create fake candidate-default!)
       actions.clearAuthUser();
-      setIsAdmin(false);
       setAuthChecked(true);
       const next = pathnameRef.current || "/dashboard";
       router.replace(`/?auth=required&next=${encodeURIComponent(next)}`);
@@ -187,8 +184,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <div className="lg:hidden">
               <BrandLogo compact />
             </div>
-            <div className="hidden items-center gap-2 sm:flex">
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 font-mono text-xs font-semibold text-sky-700 shadow-xs dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300">
+            <div className="flex items-center gap-2">
+              <span className="hidden items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 font-mono text-xs font-semibold text-sky-700 shadow-xs sm:inline-flex dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300">
                 <span className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
                 {t.targetShort}:{" "}
                 <span className="font-bold text-sky-700 dark:text-sky-300">
@@ -218,24 +215,21 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                   </span>
                 );
               })()}
-            </div>
-          </div>
 
-          {/* Right Controls: Admin Link (admin only) + Theme Toggle + Profile + Sign Out */}
-          <div className="flex items-center gap-2 sm:gap-2.5">
-            {isAdmin && (
               <Link
                 href="/admin"
                 prefetch={true}
                 data-testid="topbar-admin-link"
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 text-xs font-bold text-white shadow-xs transition-colors hover:bg-emerald-700 dark:hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-600/15 px-2.5 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-emerald-700 shadow-xs transition-colors hover:border-emerald-500 hover:bg-emerald-600 hover:text-white dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-600 dark:hover:text-white"
               >
                 <Shield className="h-3.5 w-3.5 pointer-events-none" />
-                <span className="pointer-events-none hidden sm:inline">
-                  Shaxsiy Adminlar
-                </span>
+                <span className="pointer-events-none">Admin Panel</span>
               </Link>
-            )}
+            </div>
+          </div>
+
+          {/* Right Controls: Theme Toggle + Profile + Sign Out */}
+          <div className="flex items-center gap-2 sm:gap-2.5">
             {/* Dark / Light Theme Toggle */}
             <button
               type="button"

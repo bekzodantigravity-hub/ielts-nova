@@ -1,13 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   ADMIN_SESSION_COOKIE_NAME,
-  getAdminEmail,
-  isAdminCredentials,
+  isAdminEmail,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
   shouldUseSecureCookie,
   signAdminToken,
   signSessionToken,
+  verifyAdminCredentials,
 } from "@/lib/auth-token";
 import { resolveGoogleClientId } from "@/lib/env-config";
 import { findUserByEmail, upsertUser } from "@/lib/users-db";
@@ -70,14 +70,14 @@ export async function POST(req: NextRequest) {
     const secure = shouldUseSecureCookie(req);
 
     // Check Admin login first
-    if (email === getAdminEmail()) {
+    if (await isAdminEmail(email)) {
       if (mode === "register") {
         return NextResponse.json(
           { error: "Bu email admin hisobiga biriktirilgan. 'Kirish' bo'limidan parolingiz bilan kiring." },
           { status: 409 }
         );
       }
-      if (!isAdminCredentials(email, password)) {
+      if (!(await verifyAdminCredentials(email, password))) {
         return NextResponse.json(
           { error: "Parol noto'g'ri. Iltimos, qaytadan kiriting." },
           { status: 401 }

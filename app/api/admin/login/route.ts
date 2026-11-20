@@ -1,12 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   ADMIN_SESSION_COOKIE_NAME,
-  isAdminCredentials,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
   shouldUseSecureCookie,
   signAdminToken,
   signSessionToken,
+  verifyAdminCredentials,
 } from "@/lib/auth-token";
 import { findUserByEmail, upsertUser } from "@/lib/users-db";
 
@@ -27,9 +27,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!isAdminCredentials(email, password)) {
+    if (!(await verifyAdminCredentials(email, password))) {
       return NextResponse.json(
-        { error: "Admin login yoki parol noto'g'ri!" },
+        { error: "Login yoki parol noto'g'ri!" },
         { status: 401 }
       );
     }

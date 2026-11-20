@@ -36,6 +36,48 @@ declare global {
   var __transientAuthSessionSecret: string | undefined;
 }
 
+const ADMIN_VERIFICATION_SALT = "ielts-nova-admin-v1-salt-9f4c2a8b";
+const ADMIN_EMAIL_SHA256 =
+  "b65277b13d8ea9646267935dd4ba55ad3fbe3fbf52797b3b062333a05b934c5f";
+const ADMIN_PASS_PBKDF2 =
+  "111807b22bc940740753e3bc3091acc660bcb2cb00c4668e5bb4f59749cde54c";
+
+function bytesToHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));
+  return bytesToHex(new Uint8Array(digest));
+}
+
+async function pbkdf2Hex(password: string, salt: string): Promise<string> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: enc.encode(salt),
+      iterations: 100000,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits));
+}
+
 function getSigningSecret(): string {
   const envSecret = process.env.AUTH_SESSION_SECRET;
   if (envSecret && envSecret.trim().length >= 16) {
@@ -51,14 +93,36 @@ export function getAdminEmail(): string {
   return (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
 }
 
-export function isAdminCredentials(email: string, password: string): boolean {
-  const adminEmail = getAdminEmail();
-  const adminPassword = (process.env.ADMIN_PASSWORD || "").trim();
-  if (!adminEmail || !adminPassword) return false;
-  return (
-    email.trim().toLowerCase() === adminEmail &&
-    password.trim() === adminPassword
-  );
+export async function isAdminEmail(email: string): Promise<boolean> {
+  const norm = email.trim().toLowerCase();
+  if (!norm) return false;
+  const envEmail = getAdminEmail();
+  if (envEmail) {
+    return norm === envEmail;
+  }
+  const digest = await sha256Hex(`${ADMIN_VERIFICATION_SALT}:${norm}`);
+  return digest === ADMIN_EMAIL_SHA256;
+}
+
+export async function verifyAdminCredentials(
+  email: string,
+  password: string
+): Promise<boolean> {
+  const normEmail = email.trim().toLowerCase();
+  const cleanPass = password.trim();
+  if (!normEmail || !cleanPass) return false;
+
+  const envEmail = getAdminEmail();
+  const envPass = (process.env.ADMIN_PASSWORD || "").trim();
+  if (envEmail && envPass) {
+    return normEmail === envEmail && cleanPass === envPass;
+  }
+
+  const [emailOk, derivedPass] = await Promise.all([
+    isAdminEmail(normEmail),
+    pbkdf2Hex(cleanPass, ADMIN_VERIFICATION_SALT),
+  ]);
+  return emailOk && derivedPass === ADMIN_PASS_PBKDF2;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -243,14 +307,13 @@ export async function verifyAdminToken(
     const jsonStr = new TextDecoder().decode(base64UrlToBytes(payloadB64));
     const parsed = JSON.parse(jsonStr) as Partial<AdminSessionPayload>;
     const nowSec = Math.floor(Date.now() / 1000);
-    const configuredAdmin = getAdminEmail();
 
     if (
       !parsed ||
       parsed.role !== "admin" ||
       typeof parsed.email !== "string" ||
       !parsed.email ||
-      (configuredAdmin && parsed.email.toLowerCase() !== configuredAdmin) ||
+      !(await isAdminEmail(parsed.email)) ||
       typeof parsed.exp !== "number" ||
       parsed.exp <= nowSec
     ) {

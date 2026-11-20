@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   ADMIN_SESSION_COOKIE_NAME,
-  getAdminEmail,
+  isAdminEmail,
   verifyAdminToken,
 } from "@/lib/auth-token";
 import {
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
       phone,
       name,
       plan,
-      role: email === getAdminEmail() ? "admin" : "user",
+      role: (await isAdminEmail(email)) ? "admin" : "user",
       targetBand:
         typeof body.targetBand === "number" && !Number.isNaN(body.targetBand)
           ? body.targetBand
@@ -194,7 +194,7 @@ export async function DELETE(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (email === getAdminEmail()) {
+    if (await isAdminEmail(email)) {
       return NextResponse.json(
         { error: "Asosiy admin hisobini o'chirib bo'lmaydi." },
         { status: 400 }
