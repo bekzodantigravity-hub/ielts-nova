@@ -18,6 +18,10 @@ import {
   ScrollProgressBar,
 } from "@/components/motion";
 import { Sidebar } from "@/components/sidebar";
+import {
+  getLocalAdminUsers,
+  upsertLocalAdminUser,
+} from "@/lib/admin-local-store";
 import { DICT, type Lang } from "@/lib/i18n";
 import {
   actions,
@@ -55,7 +59,24 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         isAdmin?: boolean;
       };
       if (data.authenticated && data.user) {
-        actions.setAuthUser(data.user);
+        const localRow = getLocalAdminUsers().find(
+          (u) => u.email.toLowerCase() === data.user!.email.toLowerCase()
+        );
+        const syncedUser: ClientAuthUser = {
+          ...data.user,
+          plan: localRow?.plan || data.user.plan || "free",
+          phone: data.user.phone || localRow?.phone,
+        };
+        upsertLocalAdminUser({
+          id: syncedUser.sub,
+          email: syncedUser.email,
+          name: syncedUser.name,
+          phone: syncedUser.phone || "",
+          plan: syncedUser.plan || "free",
+          role: syncedUser.role || "user",
+          targetBand: syncedUser.targetBand ?? 7.5,
+        });
+        actions.setAuthUser(syncedUser);
         setAuthChecked(true);
         return;
       }
@@ -90,6 +111,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     // Clear local state and leave immediately; the logout request is capped so the
     // click never feels stuck waiting on the network.
     actions.clearAuthUser();
+    try {
+      document.cookie = "ielts_nova_session=; path=/; max-age=0; SameSite=Lax";
+    } catch {}
     const logout = fetch("/api/auth/logout", {
       method: "POST",
       keepalive: true,

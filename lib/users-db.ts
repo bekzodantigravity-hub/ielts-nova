@@ -182,10 +182,24 @@ export function adminUpdateUser(
 ): { ok: true; user: StoredUser } | { ok: false; error: string } {
   const oldKey = originalEmail.trim().toLowerCase();
   const db = ensureDbFile();
-  const existing = db.users[oldKey];
-  if (!existing) {
-    return { ok: false, error: "Foydalanuvchi topilmadi." };
-  }
+  const now = new Date().toISOString();
+  const existing: StoredUser = db.users[oldKey] || {
+    id: `usr_${Math.random().toString(36).slice(2, 10)}`,
+    email: oldKey,
+    name:
+      patch.name?.trim() ||
+      oldKey
+        .split("@")[0]
+        .replace(/[._-]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()) ||
+      "Candidate",
+    plan: "free",
+    role: "user",
+    targetBand: 7.5,
+    provider: "google",
+    createdAt: now,
+    updatedAt: now,
+  };
 
   const nextEmail = patch.email ? patch.email.trim().toLowerCase() : oldKey;
   if (!nextEmail || !nextEmail.includes("@")) {
@@ -199,7 +213,6 @@ export function adminUpdateUser(
     };
   }
 
-  const now = new Date().toISOString();
   const nextName =
     patch.name !== undefined
       ? patch.name.trim() || existing.name
@@ -244,8 +257,9 @@ export function adminUpdateUser(
 export function deleteUserByEmail(email: string): boolean {
   const norm = email.trim().toLowerCase();
   const db = ensureDbFile();
-  if (!db.users[norm]) return false;
-  delete db.users[norm];
+  if (db.users[norm]) {
+    delete db.users[norm];
+  }
   if (!Array.isArray(db.deletedEmails)) {
     db.deletedEmails = [];
   }

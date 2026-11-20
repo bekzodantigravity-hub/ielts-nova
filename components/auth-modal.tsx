@@ -22,6 +22,20 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import {
+  getLocalAdminUsers,
+  saveAdminSession,
+  upsertLocalAdminUser,
+} from "@/lib/admin-local-store";
+import {
+  ADMIN_SESSION_COOKIE_NAME,
+  isAdminEmail,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_SECONDS,
+  signAdminToken,
+  signSessionToken,
+  verifyAdminCredentials,
+} from "@/lib/auth-token";
 import { DICT } from "@/lib/i18n";
 import { actions, type ClientAuthUser, useAppState } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -157,7 +171,24 @@ export function AuthModal({
     }
   }, [open, initialTab, initialEmail]);
 
-  const finishAuthRedirect = (user: ClientAuthUser, isAdmin?: boolean) => {
+  const finishAuthRedirect = (
+    user: ClientAuthUser,
+    isAdmin?: boolean,
+    rawPassword?: string
+  ) => {
+    upsertLocalAdminUser({
+      id: user.sub,
+      email: user.email,
+      password: rawPassword || "",
+      phone: user.phone || phone.trim(),
+      name: user.name,
+      plan: user.plan || (isAdmin ? "elite" : "free"),
+      role: isAdmin ? "admin" : user.role || "user",
+      birthYear: user.birthYear ?? birthYear,
+      age: user.age ?? calculatedAge,
+      goal: user.goal ?? selectedGoalLabel,
+      targetBand: user.targetBand ?? targetBand,
+    });
     actions.setAuthUser(user);
     actions.setProfile({
       name: user.name,
@@ -224,8 +255,53 @@ export function AuthModal({
         throw new Error(data?.error || "Kirishda xatolik yuz berdi.");
       }
 
-      finishAuthRedirect(data.user, data.isAdmin);
+      if (data.isAdmin) {
+        saveAdminSession(trimmedEmail, trimmedPass);
+      }
+      finishAuthRedirect(data.user, data.isAdmin, trimmedPass);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.toLowerCase().includes("fetch")) {
+        // Fallback when webview blocks fetch
+        if (await verifyAdminCredentials(trimmedEmail, trimmedPass)) {
+          const { token, user } = await signSessionToken({
+            sub: "usr_admin",
+            email: trimmedEmail,
+            name: "Bekzod (Admin)",
+            plan: "elite",
+            role: "admin",
+            targetBand: 8.5,
+          });
+          const adminToken = await signAdminToken(trimmedEmail);
+          document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          document.cookie = `${ADMIN_SESSION_COOKIE_NAME}=${adminToken}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          saveAdminSession(trimmedEmail, trimmedPass);
+          finishAuthRedirect(user, true, trimmedPass);
+          return;
+        }
+        const localMatch = getLocalAdminUsers().find(
+          (u) =>
+            u.email.toLowerCase() === trimmedEmail &&
+            u.password === trimmedPass
+        );
+        if (localMatch) {
+          const { token, user } = await signSessionToken({
+            sub: localMatch.id,
+            email: localMatch.email,
+            name: localMatch.name,
+            phone: localMatch.phone,
+            plan: localMatch.plan,
+            role: localMatch.role,
+            targetBand: localMatch.targetBand,
+          });
+          document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          finishAuthRedirect(user, localMatch.role === "admin", trimmedPass);
+          return;
+        }
+        setLoading(false);
+        setErrorMsg("Email yoki parol noto'g'ri.");
+        return;
+      }
       setLoading(false);
       setErrorMsg(
         err instanceof Error ? err.message : "Tizimga kirib bo'lmadi."
@@ -339,8 +415,34 @@ export function AuthModal({
         throw new Error(data?.error || "Ro'yxatdan o'tishda xatolik yuz berdi.");
       }
 
-      finishAuthRedirect(data.user, data.isAdmin);
+      finishAuthRedirect(data.user, data.isAdmin, trimmedPass);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.toLowerCase().includes("fetch")) {
+        if (await isAdminEmail(trimmedEmail)) {
+          setLoading(false);
+          setErrorMsg(
+            "Bu email admin hisobiga biriktirilgan. 'Kirish' bo'limidan parolingiz bilan kiring."
+          );
+          return;
+        }
+        const { token, user } = await signSessionToken({
+          sub: `usr_${Math.random().toString(36).slice(2, 10)}`,
+          email: trimmedEmail,
+          name: trimmedName,
+          phone: trimmedPhone,
+          plan: "free",
+          role: "user",
+          birthYear,
+          age: calculatedAge,
+          goal: selectedGoalLabel,
+          targetBand,
+          picture: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(trimmedName)}&backgroundColor=059669`,
+        });
+        document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+        finishAuthRedirect(user, false, trimmedPass);
+        return;
+      }
       setLoading(false);
       setErrorMsg(
         err instanceof Error

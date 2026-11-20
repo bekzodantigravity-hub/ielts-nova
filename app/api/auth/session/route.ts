@@ -5,7 +5,11 @@ import {
   verifyAdminToken,
   verifySessionToken,
 } from "@/lib/auth-token";
-import { findUserByEmail, isUserDeleted } from "@/lib/users-db";
+import {
+  findUserByEmail,
+  isUserDeleted,
+  upsertUser,
+} from "@/lib/users-db";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +30,7 @@ export async function GET(req: NextRequest) {
   }
 
   const isAdmin = Boolean(adminSession) || user.role === "admin";
-  const stored = findUserByEmail(user.email);
+  let stored = findUserByEmail(user.email);
 
   // If explicitly deleted by admin (or removed locally), log the user out cleanly
   if (
@@ -37,6 +41,24 @@ export async function GET(req: NextRequest) {
       authenticated: false,
       user: null,
       isAdmin: false,
+    });
+  }
+
+  // On Vercel serverless cold starts, re-hydrate user into this container's DB
+  if (!stored && !isUserDeleted(user.email)) {
+    stored = upsertUser({
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      plan: user.plan || (isAdmin ? "elite" : "free"),
+      role: isAdmin ? "admin" : user.role || "user",
+      picture: user.picture,
+      birthYear: user.birthYear,
+      age: user.age,
+      goal: user.goal,
+      targetBand: user.targetBand,
+      dailyGoal: user.dailyGoal,
+      examDate: user.examDate,
     });
   }
 

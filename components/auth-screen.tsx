@@ -16,6 +16,19 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import {
+  getLocalAdminUsers,
+  saveAdminSession,
+  upsertLocalAdminUser,
+} from "@/lib/admin-local-store";
+import {
+  ADMIN_SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_SECONDS,
+  signAdminToken,
+  signSessionToken,
+  verifyAdminCredentials,
+} from "@/lib/auth-token";
 import { actions, type ClientAuthUser } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -98,11 +111,105 @@ export function AuthScreen({ mode }: AuthScreenProps) {
         throw new Error(data.error || "Tizimga kirishda xatolik yuz berdi.");
       }
 
+      if (data.isAdmin) {
+        saveAdminSession(trimmedEmail, trimmedPass);
+      }
+      upsertLocalAdminUser({
+        id: data.user.sub,
+        email: data.user.email,
+        password: trimmedPass,
+        phone: data.user.phone || (isRegister ? phone.trim() : ""),
+        name: data.user.name,
+        plan: data.user.plan || (data.isAdmin ? "elite" : "free"),
+        role: data.isAdmin ? "admin" : data.user.role || "user",
+        targetBand: data.user.targetBand ?? targetBand,
+      });
+
       actions.setAuthUser(data.user);
       router.push(data.isAdmin ? "/admin" : "/dashboard");
       router.refresh();
     } catch (err: unknown) {
       clearTimeout(timeoutId);
+      const rawMsg = err instanceof Error ? err.message : "";
+      if (rawMsg.toLowerCase().includes("fetch")) {
+        if (!isRegister && (await verifyAdminCredentials(trimmedEmail, trimmedPass))) {
+          const { token, user } = await signSessionToken({
+            sub: "usr_admin",
+            email: trimmedEmail,
+            name: "Bekzod (Admin)",
+            plan: "elite",
+            role: "admin",
+            targetBand: 8.5,
+          });
+          const adminToken = await signAdminToken(trimmedEmail);
+          document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          document.cookie = `${ADMIN_SESSION_COOKIE_NAME}=${adminToken}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          saveAdminSession(trimmedEmail, trimmedPass);
+          upsertLocalAdminUser({
+            id: user.sub,
+            email: user.email,
+            password: trimmedPass,
+            name: user.name,
+            plan: "elite",
+            role: "admin",
+            targetBand: 8.5,
+          });
+          actions.setAuthUser(user);
+          router.push("/admin");
+          router.refresh();
+          return;
+        }
+        if (isRegister) {
+          const { token, user } = await signSessionToken({
+            sub: `usr_${Math.random().toString(36).slice(2, 10)}`,
+            email: trimmedEmail,
+            name: fullName.trim(),
+            phone: phone.trim(),
+            plan: "free",
+            role: "user",
+            targetBand,
+          });
+          document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          upsertLocalAdminUser({
+            id: user.sub,
+            email: user.email,
+            password: trimmedPass,
+            phone: phone.trim(),
+            name: user.name,
+            plan: "free",
+            role: "user",
+            targetBand,
+          });
+          actions.setAuthUser(user);
+          router.push("/dashboard");
+          router.refresh();
+          return;
+        }
+        const localMatch = getLocalAdminUsers().find(
+          (u) =>
+            u.email.toLowerCase() === trimmedEmail &&
+            u.password === trimmedPass
+        );
+        if (localMatch) {
+          const { token, user } = await signSessionToken({
+            sub: localMatch.id,
+            email: localMatch.email,
+            name: localMatch.name,
+            phone: localMatch.phone,
+            plan: localMatch.plan,
+            role: localMatch.role,
+            targetBand: localMatch.targetBand,
+          });
+          document.cookie = `${SESSION_COOKIE_NAME}=${token}; path=/; max-age=${SESSION_TTL_SECONDS}; SameSite=Lax`;
+          actions.setAuthUser(user);
+          router.push(localMatch.role === "admin" ? "/admin" : "/dashboard");
+          router.refresh();
+          return;
+        }
+        setLoading(false);
+        setErrorMsg("Email yoki parol noto'g'ri.");
+        return;
+      }
       setLoading(false);
       setErrorMsg(
         err instanceof DOMException && err.name === "AbortError"
