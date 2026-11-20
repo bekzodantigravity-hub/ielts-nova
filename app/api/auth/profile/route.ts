@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
       name?: string;
+      phone?: string;
       birthYear?: number;
       age?: number;
       goal?: string;
@@ -28,8 +29,12 @@ export async function POST(req: NextRequest) {
     };
 
     const newName = body.name?.trim() || currentUser.name;
+    const newPhone =
+      body.phone !== undefined ? body.phone.trim() : currentUser.phone;
     const newBirthYear =
-      typeof body.birthYear === "number" ? body.birthYear : currentUser.birthYear;
+      typeof body.birthYear === "number"
+        ? body.birthYear
+        : currentUser.birthYear;
     const newAge =
       typeof body.age === "number"
         ? body.age
@@ -38,14 +43,19 @@ export async function POST(req: NextRequest) {
           : currentUser.age;
     const newGoal = body.goal?.trim() || currentUser.goal;
     const newTargetBand =
-      typeof body.targetBand === "number" ? body.targetBand : currentUser.targetBand;
+      typeof body.targetBand === "number"
+        ? body.targetBand
+        : currentUser.targetBand;
     const newExamDate =
       body.examDate !== undefined ? body.examDate : currentUser.examDate;
     const newDailyGoal =
-      typeof body.dailyGoal === "number" ? body.dailyGoal : currentUser.dailyGoal;
+      typeof body.dailyGoal === "number"
+        ? body.dailyGoal
+        : currentUser.dailyGoal;
 
     const updatedUser = updateUserProfileAndData(currentUser.email, {
       name: newName,
+      phone: newPhone,
       birthYear: newBirthYear,
       age: newAge,
       goal: newGoal,
@@ -62,6 +72,9 @@ export async function POST(req: NextRequest) {
       sub: updatedUser.id,
       email: updatedUser.email,
       name: updatedUser.name,
+      phone: updatedUser.phone,
+      plan: updatedUser.plan || "free",
+      role: updatedUser.role === "admin" ? "admin" : "user",
       picture: updatedUser.picture,
       birthYear: updatedUser.birthYear,
       age: updatedUser.age,
@@ -84,7 +97,9 @@ export async function POST(req: NextRequest) {
     return res;
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to update profile." },
+      {
+        error: err instanceof Error ? err.message : "Failed to update profile.",
+      },
       { status: 500 }
     );
   }

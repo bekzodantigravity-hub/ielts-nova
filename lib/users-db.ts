@@ -1,11 +1,18 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+
+export type UserPlan = "free" | "pro" | "elite";
+export type UserRole = "user" | "admin";
 
 export interface StoredUser {
   id: string;
   email: string;
   password?: string;
+  phone?: string;
   name: string;
+  plan?: UserPlan;
+  role?: UserRole;
   birthYear?: number;
   age?: number;
   goal?: string;
@@ -14,7 +21,10 @@ export interface StoredUser {
   dailyGoal?: number;
   picture?: string;
   provider: "google";
-  inProgress?: Record<string, { answered: number; total: number; updatedAt: number }>;
+  inProgress?: Record<
+    string,
+    { answered: number; total: number; updatedAt: number }
+  >;
   attempts?: unknown[];
   activity?: Record<string, number>;
   createdAt: string;
@@ -23,10 +33,27 @@ export interface StoredUser {
 
 interface DatabaseSchema {
   users: Record<string, StoredUser>;
+  deletedEmails?: string[];
 }
 
-const DB_DIR = path.join(process.cwd(), ".data");
+// On Vercel serverless functions, process.cwd() is read-only (/var/task);
+// store in os.tmpdir() safely while keeping .data/users.json locally.
+const DB_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), "ielts-nova-data")
+  : path.join(process.cwd(), ".data");
 const DB_FILE = path.join(DB_DIR, "users.json");
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __ieltsNovaUsersDbCache: DatabaseSchema | undefined;
+}
+
+export function normalizePlan(raw: unknown): UserPlan {
+  if (raw === "pro" || raw === "elite" || raw === "free") {
+    return raw;
+  }
+  return "free";
+}
 
 function ensureDbFile(): DatabaseSchema {
   try {
@@ -34,21 +61,33 @@ function ensureDbFile(): DatabaseSchema {
       fs.mkdirSync(DB_DIR, { recursive: true });
     }
     if (!fs.existsSync(DB_FILE)) {
-      const initial: DatabaseSchema = { users: {} };
+      const initial: DatabaseSchema = globalThis.__ieltsNovaUsersDbCache || {
+        users: {},
+        deletedEmails: [],
+      };
       writeDbFile(initial);
       return initial;
     }
     const raw = fs.readFileSync(DB_FILE, "utf8");
     if (!raw || !raw.trim()) {
-      return { users: {} };
+      return globalThis.__ieltsNovaUsersDbCache || { users: {}, deletedEmails: [] };
     }
-    return JSON.parse(raw) as DatabaseSchema;
+    const parsed = JSON.parse(raw) as DatabaseSchema;
+    if (!parsed || typeof parsed !== "object" || !parsed.users) {
+      return { users: {}, deletedEmails: [] };
+    }
+    if (!Array.isArray(parsed.deletedEmails)) {
+      parsed.deletedEmails = [];
+    }
+    globalThis.__ieltsNovaUsersDbCache = parsed;
+    return parsed;
   } catch {
-    return { users: {} };
+    return globalThis.__ieltsNovaUsersDbCache || { users: {}, deletedEmails: [] };
   }
 }
 
 function writeDbFile(data: DatabaseSchema): void {
+  globalThis.__ieltsNovaUsersDbCache = data;
   try {
     if (!fs.existsSync(DB_DIR)) {
       fs.mkdirSync(DB_DIR, { recursive: true });
@@ -61,7 +100,9 @@ function writeDbFile(data: DatabaseSchema): void {
       fs.writeFileSync(tempFile, serialized, "utf8");
       try {
         fs.copyFileSync(tempFile, DB_FILE);
-        try { fs.unlinkSync(tempFile); } catch {}
+        try {
+          fs.unlinkSync(tempFile);
+        } catch {}
       } catch {}
     }
   } catch (err) {
@@ -69,17 +110,37 @@ function writeDbFile(data: DatabaseSchema): void {
   }
 }
 
+export function isUserDeleted(email: string): boolean {
+  const norm = email.trim().toLowerCase();
+  const db = ensureDbFile();
+  return Array.isArray(db.deletedEmails) && db.deletedEmails.includes(norm);
+}
+
 export function findUserByEmail(email: string): StoredUser | null {
   const norm = email.trim().toLowerCase();
   const db = ensureDbFile();
-  return db.users[norm] || null;
+  const user = db.users[norm];
+  if (!user) return null;
+  return {
+    ...user,
+    plan: normalizePlan(user.plan),
+    role: user.role === "admin" ? "admin" : "user",
+  };
 }
 
 export function listAllUsers(): StoredUser[] {
   const db = ensureDbFile();
-  return Object.values(db.users).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
+  return Object.values(db.users)
+    .map((u) => ({
+      ...u,
+      plan: normalizePlan(u.plan),
+      role: (u.role === "admin" ? "admin" : "user") as UserRole,
+    }))
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.createdAt).getTime() -
+        new Date(a.updatedAt || a.createdAt).getTime()
+    );
 }
 
 export function updateUserProfileAndData(
@@ -95,6 +156,7 @@ export function updateUserProfileAndData(
   const updated: StoredUser = {
     ...existing,
     ...patch,
+    plan: patch.plan ? normalizePlan(patch.plan) : normalizePlan(existing.plan),
     updatedAt: now,
   };
 
@@ -103,10 +165,104 @@ export function updateUserProfileAndData(
   return updated;
 }
 
+export function adminUpdateUser(
+  originalEmail: string,
+  patch: {
+    email?: string;
+    password?: string;
+    phone?: string;
+    name?: string;
+    plan?: UserPlan;
+    role?: UserRole;
+    targetBand?: number;
+    goal?: string;
+    birthYear?: number;
+    age?: number;
+  }
+): { ok: true; user: StoredUser } | { ok: false; error: string } {
+  const oldKey = originalEmail.trim().toLowerCase();
+  const db = ensureDbFile();
+  const existing = db.users[oldKey];
+  if (!existing) {
+    return { ok: false, error: "Foydalanuvchi topilmadi." };
+  }
+
+  const nextEmail = patch.email ? patch.email.trim().toLowerCase() : oldKey;
+  if (!nextEmail || !nextEmail.includes("@")) {
+    return { ok: false, error: "Email manzili noto'g'ri formatda." };
+  }
+
+  if (nextEmail !== oldKey && db.users[nextEmail]) {
+    return {
+      ok: false,
+      error: "Bu email manzili boshqa foydalanuvchiga biriktirilgan.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const nextName =
+    patch.name !== undefined
+      ? patch.name.trim() || existing.name
+      : existing.name;
+  const updated: StoredUser = {
+    ...existing,
+    email: nextEmail,
+    name: nextName,
+    password:
+      patch.password !== undefined ? patch.password.trim() : existing.password,
+    phone: patch.phone !== undefined ? patch.phone.trim() : existing.phone,
+    plan: patch.plan ? normalizePlan(patch.plan) : normalizePlan(existing.plan),
+    role: patch.role ?? existing.role ?? "user",
+    targetBand:
+      typeof patch.targetBand === "number" && !Number.isNaN(patch.targetBand)
+        ? patch.targetBand
+        : existing.targetBand,
+    goal: patch.goal !== undefined ? patch.goal.trim() : existing.goal,
+    birthYear:
+      typeof patch.birthYear === "number"
+        ? patch.birthYear
+        : existing.birthYear,
+    age: typeof patch.age === "number" ? patch.age : existing.age,
+    picture:
+      patch.name !== undefined && nextName !== existing.name
+        ? `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(nextName)}&backgroundColor=059669`
+        : existing.picture,
+    updatedAt: now,
+  };
+
+  if (nextEmail !== oldKey) {
+    delete db.users[oldKey];
+  }
+  db.users[nextEmail] = updated;
+  if (Array.isArray(db.deletedEmails)) {
+    db.deletedEmails = db.deletedEmails.filter((e) => e !== nextEmail);
+  }
+  writeDbFile(db);
+  return { ok: true, user: updated };
+}
+
+export function deleteUserByEmail(email: string): boolean {
+  const norm = email.trim().toLowerCase();
+  const db = ensureDbFile();
+  if (!db.users[norm]) return false;
+  delete db.users[norm];
+  if (!Array.isArray(db.deletedEmails)) {
+    db.deletedEmails = [];
+  }
+  if (!db.deletedEmails.includes(norm)) {
+    db.deletedEmails.push(norm);
+  }
+  writeDbFile(db);
+  return true;
+}
+
 export function upsertUser(user: {
   email: string;
   password?: string;
+  phone?: string;
   name?: string;
+  plan?: UserPlan;
+  role?: UserRole;
   birthYear?: number;
   age?: number;
   goal?: string;
@@ -114,7 +270,10 @@ export function upsertUser(user: {
   examDate?: string | null;
   dailyGoal?: number;
   picture?: string;
-  inProgress?: Record<string, { answered: number; total: number; updatedAt: number }>;
+  inProgress?: Record<
+    string,
+    { answered: number; total: number; updatedAt: number }
+  >;
   attempts?: unknown[];
   activity?: Record<string, number>;
 }): StoredUser {
@@ -130,19 +289,31 @@ export function upsertUser(user: {
   const fallbackName =
     user.name?.trim() ||
     existing?.name ||
-    norm.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) ||
+    norm
+      .split("@")[0]
+      .replace(/[._-]/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase()) ||
     "Candidate";
 
   const updated: StoredUser = {
     id: existing?.id || `usr_${Math.random().toString(36).slice(2, 10)}`,
     email: norm,
-    password: user.password || existing?.password,
+    password: user.password?.trim() || existing?.password,
+    phone: user.phone !== undefined ? user.phone.trim() : existing?.phone,
     name: fallbackName,
+    plan: user.plan ? normalizePlan(user.plan) : normalizePlan(existing?.plan),
+    role: user.role ?? existing?.role ?? "user",
     birthYear: user.birthYear ?? existing?.birthYear,
     age: calculatedAge,
-    goal: user.goal || existing?.goal || "Chet elda ta'lim (Bakalavr / Magistratura)",
+    goal:
+      user.goal ||
+      existing?.goal ||
+      "Chet elda ta'lim (Bakalavr / Magistratura)",
     targetBand: user.targetBand ?? existing?.targetBand ?? 7.5,
-    examDate: user.examDate !== undefined ? user.examDate : existing?.examDate ?? null,
+    examDate:
+      user.examDate !== undefined
+        ? user.examDate
+        : (existing?.examDate ?? null),
     dailyGoal: user.dailyGoal ?? existing?.dailyGoal ?? 40,
     picture: user.picture || existing?.picture,
     provider: "google",
@@ -154,6 +325,9 @@ export function upsertUser(user: {
   };
 
   db.users[norm] = updated;
+  if (Array.isArray(db.deletedEmails)) {
+    db.deletedEmails = db.deletedEmails.filter((e) => e !== norm);
+  }
   writeDbFile(db);
   return updated;
 }

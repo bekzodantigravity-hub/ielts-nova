@@ -94,6 +94,7 @@ export function LandingPage() {
 
   // Auth modal & verified session state
   const [authOpen, setAuthOpen] = useState(false);
+  const [authTab, setAuthTab] = useState<"register" | "login">("register");
   const [authRequired, setAuthRequired] = useState(false);
   const [nextPath, setNextPath] = useState("/dashboard");
   const [sessionUser, setSessionUser] = useState<ClientAuthUser | null>(null);
@@ -150,6 +151,7 @@ export function LandingPage() {
     }
     setNextPath(target);
     setAuthRequired(false);
+    setAuthTab("register");
     setAuthOpen(true);
   };
 
@@ -269,12 +271,13 @@ export function LandingPage() {
         launchingLabel={authT.portalLaunching}
       />
 
-      {/* Google + Candidate Onboarding Modal */}
+      {/* Candidate Registration & Login Modal */}
       <AuthModal
         open={authOpen}
         onClose={handleCloseAuth}
         requiredReason={authRequired}
         nextPath={nextPath}
+        initialTab={authTab}
       />
 
       {/* ===================================================================
@@ -369,7 +372,7 @@ export function LandingPage() {
                     {sessionUser.name}
                   </span>
                   <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-wider text-white">
-                    PRO
+                    {(sessionUser.plan || "free").toUpperCase()}
                   </span>
                 </Link>
 
@@ -384,18 +387,33 @@ export function LandingPage() {
                 </Link>
               </div>
             ) : (
-              <button
-                type="button"
-                data-testid="hero-nav-cta"
-                onClick={() => {
-                  setNextPath("/dashboard");
-                  setAuthOpen(true);
-                }}
-                className="group inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-emerald-600/20 transition-colors hover:bg-emerald-700 sm:px-5 sm:py-2.5 sm:text-sm dark:bg-emerald-600 dark:hover:bg-emerald-500 cursor-pointer"
-              >
-                <span>{t.startFree}</span>
-                <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="hero-nav-login"
+                  onClick={() => {
+                    setNextPath("/dashboard");
+                    setAuthTab("login");
+                    setAuthOpen(true);
+                  }}
+                  className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-3.5 py-2 text-xs font-bold text-zinc-700 transition-colors hover:border-emerald-600/40 hover:text-emerald-700 sm:px-4 sm:py-2.5 sm:text-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 cursor-pointer"
+                >
+                  Kirish
+                </button>
+                <button
+                  type="button"
+                  data-testid="hero-nav-cta"
+                  onClick={() => {
+                    setNextPath("/dashboard");
+                    setAuthTab("register");
+                    setAuthOpen(true);
+                  }}
+                  className="group inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-emerald-600/20 transition-colors hover:bg-emerald-700 sm:px-5 sm:py-2.5 sm:text-sm dark:bg-emerald-600 dark:hover:bg-emerald-500 cursor-pointer"
+                >
+                  <span>{t.startFree}</span>
+                  <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+                </button>
+              </div>
             )}
           </div>
         </motion.header>

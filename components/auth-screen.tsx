@@ -8,42 +8,19 @@ import {
   EyeOff,
   Lock,
   Mail,
+  Phone,
   ShieldCheck,
   User,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { actions, type ClientAuthUser } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/utils/supabase/client";
 
 interface AuthScreenProps {
   mode: "login" | "register";
-}
-
-function GoogleIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-      />
-    </svg>
-  );
 }
 
 const TARGET_BANDS = [6.5, 7.0, 7.5, 8.0, 8.5];
@@ -53,28 +30,41 @@ export function AuthScreen({ mode }: AuthScreenProps) {
   const isRegister = mode === "register";
 
   const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("+998 ");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [targetBand, setTargetBand] = useState(7.0);
+  const [targetBand, setTargetBand] = useState(7.5);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [infoMsg, setInfoMsg] = useState<string | null>(null);
-  const emailInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    setInfoMsg(null);
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setErrorMsg("Iltimos, elektron pochtangizni kiriting.");
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPass = password.trim();
+
+    if (!trimmedEmail || !trimmedEmail.includes("@")) {
+      setErrorMsg("Iltimos, to'liq elektron pochtangizni kiriting.");
       return;
     }
 
-    if (isRegister && !fullName.trim()) {
-      setErrorMsg("Iltimos, ism va familiyangizni kiriting.");
+    if (isRegister) {
+      if (!fullName.trim()) {
+        setErrorMsg("Iltimos, ism va familiyangizni kiriting.");
+        return;
+      }
+      if (phone.replace(/\D/g, "").length < 9) {
+        setErrorMsg("Iltimos, to'g'ri telefon raqamingizni kiriting.");
+        return;
+      }
+      if (trimmedPass.length < 6) {
+        setErrorMsg("Parol kamida 6 ta belgidan iborat bo'lishi kerak.");
+        return;
+      }
+    } else if (!trimmedPass) {
+      setErrorMsg("Iltimos, parolingizni kiriting.");
       return;
     }
 
@@ -87,9 +77,11 @@ export function AuthScreen({ mode }: AuthScreenProps) {
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
+          mode: isRegister ? "register" : "login",
           email: trimmedEmail,
-          password: password.trim() || undefined,
+          password: trimmedPass,
           name: isRegister ? fullName.trim() : undefined,
+          phone: isRegister ? phone.trim() : undefined,
           targetBand: isRegister ? targetBand : undefined,
         }),
       });
@@ -98,6 +90,7 @@ export function AuthScreen({ mode }: AuthScreenProps) {
       const data = (await res.json()) as {
         ok?: boolean;
         user?: ClientAuthUser;
+        isAdmin?: boolean;
         error?: string;
       };
 
@@ -105,25 +98,8 @@ export function AuthScreen({ mode }: AuthScreenProps) {
         throw new Error(data.error || "Tizimga kirishda xatolik yuz berdi.");
       }
 
-      try {
-        const raw = localStorage.getItem("ielts-nova:known-accounts");
-        const list: ClientAuthUser[] = raw ? JSON.parse(raw) : [];
-        const nextList = [
-          data.user,
-          ...list.filter(
-            (x) => x.email.toLowerCase() !== data.user!.email.toLowerCase()
-          ),
-        ];
-        localStorage.setItem(
-          "ielts-nova:known-accounts",
-          JSON.stringify(nextList)
-        );
-      } catch {
-        // Ignore storage restrictions
-      }
-
       actions.setAuthUser(data.user);
-      router.push("/dashboard");
+      router.push(data.isAdmin ? "/admin" : "/dashboard");
       router.refresh();
     } catch (err: unknown) {
       clearTimeout(timeoutId);
@@ -138,17 +114,8 @@ export function AuthScreen({ mode }: AuthScreenProps) {
     }
   };
 
-  const handleGoogleOAuth = () => {
-    setErrorMsg(null);
-    setInfoMsg(
-      "Google elektron pochtangizni yozib kiring:"
-    );
-    emailInputRef.current?.focus();
-  };
-
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-[#070D12] text-slate-100">
-      {/* Subtle emerald top gradient & ambient atmosphere */}
       <div className="pointer-events-none fixed inset-0 bg-gradient-to-b from-emerald-500/10 via-transparent to-transparent" />
       <div className="pointer-events-none fixed -top-40 left-1/2 h-96 w-[640px] -translate-x-1/2 rounded-full bg-emerald-500/15 blur-3xl" />
 
@@ -169,9 +136,7 @@ export function AuthScreen({ mode }: AuthScreenProps) {
           </span>
         </div>
 
-        {/* Auth Card */}
         <div className="overflow-hidden rounded-3xl border border-emerald-500/20 bg-slate-950/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl">
-          {/* Top Emerald Gradient Header with Centered Logo & Motto */}
           <div className="bg-gradient-to-b from-emerald-500/10 via-transparent to-transparent px-6 pt-8 pb-5 text-center sm:px-8">
             <div className="mx-auto inline-flex flex-col items-center">
               <div className="relative overflow-hidden rounded-2xl border border-emerald-500/30 bg-[#020503] p-1 shadow-[0_0_50px_rgba(16,185,129,0.28)]">
@@ -190,7 +155,9 @@ export function AuthScreen({ mode }: AuthScreenProps) {
             </div>
 
             <h1 className="mt-5 text-xl font-bold tracking-tight text-white">
-              {isRegister ? "Yangi nomzod hisobini yaratish" : "Nomzod kabinetiga kirish"}
+              {isRegister
+                ? "Yangi nomzod hisobini yaratish"
+                : "Nomzod kabinetiga kirish"}
             </h1>
             <p className="mt-1.5 text-xs leading-relaxed text-slate-400">
               {isRegister
@@ -228,50 +195,43 @@ export function AuthScreen({ mode }: AuthScreenProps) {
               </Link>
             </div>
 
-            {/* Google Sign-In */}
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => void handleGoogleOAuth()}
-              className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-700/80 bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition-colors hover:border-emerald-500/45 hover:bg-slate-800/80 disabled:opacity-60 cursor-pointer"
-            >
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white p-0.5">
-                <GoogleIcon className="h-4 w-4" />
-              </span>
-              <span>Google orqali davom etish</span>
-            </button>
-
-            <div className="my-5 flex items-center gap-3">
-              <div className="h-px flex-1 bg-slate-800" />
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                yoki pochta orqali
-              </span>
-              <div className="h-px flex-1 bg-slate-800" />
-            </div>
-
             <form onSubmit={handleSubmit} className="space-y-4">
-              {infoMsg && (
-                <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3.5 py-2.5 text-xs font-medium text-emerald-300">
-                  {infoMsg}
-                </div>
-              )}
               {isRegister && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Ism va familiya <span className="text-emerald-400">*</span>
-                  </label>
-                  <div className="relative mt-1.5">
-                    <User className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/70" />
-                    <input
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="Masalan, Bekzod Muhammadjonov"
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900/90 py-2.5 pr-4 pl-10 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
-                    />
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Ism va familiya <span className="text-emerald-400">*</span>
+                    </label>
+                    <div className="relative mt-1.5">
+                      <User className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/70" />
+                      <input
+                        type="text"
+                        required
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        placeholder="Masalan, Sardor Alimov"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900/90 py-2.5 pr-4 pl-10 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Telefon raqam <span className="text-emerald-400">*</span>
+                    </label>
+                    <div className="relative mt-1.5">
+                      <Phone className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/70" />
+                      <input
+                        type="tel"
+                        required
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="+998 90 123 45 67"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900/90 py-2.5 pr-4 pl-10 font-mono text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </>
               )}
 
               <div>
@@ -281,7 +241,6 @@ export function AuthScreen({ mode }: AuthScreenProps) {
                 <div className="relative mt-1.5">
                   <Mail className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/70" />
                   <input
-                    ref={emailInputRef}
                     type="email"
                     required
                     value={email}
@@ -294,12 +253,14 @@ export function AuthScreen({ mode }: AuthScreenProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300">
-                  Parol
+                  Parol <span className="text-emerald-400">*</span>
                 </label>
                 <div className="relative mt-1.5">
                   <Lock className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/70" />
                   <input
                     type={showPassword ? "text" : "password"}
+                    required
+                    minLength={isRegister ? 6 : 1}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Kamida 6 ta belgi"

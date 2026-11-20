@@ -5,6 +5,7 @@ import {
   LogOut,
   Menu,
   Moon,
+  Shield,
   Sun,
 } from "lucide-react";
 import Link from "next/link";
@@ -32,23 +33,16 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const state = useAppState();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [authChecked, setAuthChecked] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const lang: Lang = state.lang;
   const t = DICT[lang].nav;
 
-  // Keep the latest pathname in a ref so the session check does not depend on it.
-  // Previously `pathname` was a dependency, so EVERY navigation re-ran the check:
-  // a network request + store rewrite + full re-render while the new page loaded.
   const pathnameRef = useRef(pathname);
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
-
-  const stateRef = useRef(state);
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
 
   const lastVerifyAtRef = useRef(0);
 
@@ -59,30 +53,24 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       const data = (await res.json()) as {
         authenticated?: boolean;
         user?: ClientAuthUser | null;
+        isAdmin?: boolean;
       };
       if (data.authenticated && data.user) {
         actions.setAuthUser(data.user);
+        setIsAdmin(Boolean(data.isAdmin || data.user.role === "admin"));
         setAuthChecked(true);
         return;
       }
-      const curr = stateRef.current;
-      // If store or local state has an active candidate, keep session uninterrupted
-      if (curr.authUser || (curr.profile?.name && curr.profile.name !== "Candidate")) {
-        setAuthChecked(true);
-        return;
-      }
-      // Assign persistent candidate profile if no session exists yet
-      actions.setAuthUser({
-        sub: "candidate-default",
-        email: "candidate@ieltsnova.uz",
-        name: curr.profile.name || "Candidate",
-        provider: "google",
-      });
+      // Strictly reject unauthenticated sessions (never create fake candidate-default!)
+      actions.clearAuthUser();
+      setIsAdmin(false);
       setAuthChecked(true);
+      const next = pathnameRef.current || "/dashboard";
+      router.replace(`/?auth=required&next=${encodeURIComponent(next)}`);
     } catch {
       setAuthChecked(true);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void verifyGoogleSession();
@@ -207,11 +195,47 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                   {state.profile.targetBand.toFixed(1)}
                 </span>
               </span>
+
+              {(() => {
+                const activePlan = (
+                  state.authUser?.plan ||
+                  state.profile.plan ||
+                  "free"
+                ).toLowerCase();
+                return (
+                  <span
+                    data-testid="dashboard-plan-badge"
+                    className={cn(
+                      "inline-flex items-center rounded-md border px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-wider",
+                      activePlan === "elite"
+                        ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/70 dark:bg-amber-950/50 dark:text-amber-300"
+                        : activePlan === "pro"
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700/70 dark:bg-emerald-950/50 dark:text-emerald-300"
+                          : "border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                    )}
+                  >
+                    Paket: {activePlan.toUpperCase()}
+                  </span>
+                );
+              })()}
             </div>
           </div>
 
-          {/* Right Controls: Theme Toggle + Google Profile + Sign Out */}
+          {/* Right Controls: Admin Link (admin only) + Theme Toggle + Profile + Sign Out */}
           <div className="flex items-center gap-2 sm:gap-2.5">
+            {isAdmin && (
+              <Link
+                href="/admin"
+                prefetch={true}
+                data-testid="topbar-admin-link"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-600 px-3 text-xs font-bold text-white shadow-xs transition-colors hover:bg-emerald-700 dark:hover:bg-emerald-500"
+              >
+                <Shield className="h-3.5 w-3.5 pointer-events-none" />
+                <span className="pointer-events-none hidden sm:inline">
+                  Shaxsiy Adminlar
+                </span>
+              </Link>
+            )}
             {/* Dark / Light Theme Toggle */}
             <button
               type="button"

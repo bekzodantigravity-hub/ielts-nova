@@ -37,8 +37,13 @@ export interface InProgressMeta {
   updatedAt: number;
 }
 
+export type ClientUserPlan = "free" | "pro" | "elite";
+export type ClientUserRole = "user" | "admin";
+
 export interface Profile {
   name: string;
+  phone?: string;
+  plan?: ClientUserPlan;
   targetBand: number;
   examDate: string | null;
   dailyGoal: number;
@@ -51,6 +56,9 @@ export interface ClientAuthUser {
   sub: string;
   email: string;
   name: string;
+  phone?: string;
+  plan?: ClientUserPlan;
+  role?: ClientUserRole;
   picture?: string;
   provider: "google";
   birthYear?: number;
@@ -117,7 +125,9 @@ function parse(raw: string | null): AppState {
     const authUser =
       p.authUser &&
       p.authUser.provider === "google" &&
-      typeof p.authUser.email === "string"
+      typeof p.authUser.email === "string" &&
+      p.authUser.sub !== "candidate-default" &&
+      p.authUser.email.toLowerCase() !== "candidate@ieltsnova.uz"
         ? p.authUser
         : null;
     return {
@@ -331,7 +341,7 @@ export const actions = {
         : accountScopedState.activity || {};
       const baseProfile = isSameUser
         ? s.profile
-        : accountScopedState.profile || s.profile;
+        : accountScopedState.profile || DEFAULT_STATE.profile;
 
       return {
         ...s,
@@ -342,6 +352,8 @@ export const actions = {
         profile: {
           ...baseProfile,
           name: user.name || baseProfile.name,
+          phone: user.phone !== undefined ? user.phone : baseProfile.phone,
+          plan: user.plan || baseProfile.plan || "free",
           birthYear: user.birthYear ?? baseProfile.birthYear,
           age: user.age ?? baseProfile.age,
           goal: user.goal ?? baseProfile.goal,

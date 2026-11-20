@@ -1,8 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
+  ADMIN_SESSION_COOKIE_NAME,
+  getAdminEmail,
+  isAdminCredentials,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
   shouldUseSecureCookie,
+  signAdminToken,
   signSessionToken,
 } from "@/lib/auth-token";
 import { resolveGoogleClientId } from "@/lib/env-config";
@@ -16,9 +20,6 @@ interface GoogleTokenInfo {
   email_verified?: string | boolean;
   name?: string;
   picture?: string;
-  expires_in?: string | number;
-  error?: string;
-  error_description?: string;
 }
 
 interface GoogleUserInfo {
@@ -33,10 +34,12 @@ interface GoogleUserInfo {
 
 export async function POST(req: NextRequest) {
   let body: {
+    mode?: "login" | "register";
     accessToken?: string;
     credential?: string;
     email?: string;
     password?: string;
+    phone?: string;
     name?: string;
     birthYear?: number;
     age?: number;
@@ -47,72 +50,257 @@ export async function POST(req: NextRequest) {
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    return NextResponse.json({ error: "Noto'g'ri so'rov formati." }, { status: 400 });
   }
 
-  // 1. Direct Google Account Sign-In / Onboarding (email + optional password + profile)
+  // 1. Direct Email + Password Login / Registration flow
   const rawEmail = body.email?.trim();
   if (rawEmail) {
     let email = rawEmail.toLowerCase();
     if (!email.includes("@")) {
-      email = `${email}@gmail.com`;
+      return NextResponse.json(
+        { error: "Iltimos, to'liq elektron pochta manzilini kiriting (masalan: ism@gmail.com)." },
+        { status: 400 }
+      );
     }
 
-    const nameFromEmail = email
-      .split("@")[0]
-      .replace(/[._-]/g, " ")
-      .replace(/\b\w/g, (c) => c.toUpperCase());
+    const password = (body.password ?? "").trim();
+    const phone = (body.phone ?? "").trim();
+    const mode = body.mode === "register" ? "register" : "login";
+    const secure = shouldUseSecureCookie(req);
 
-    const chosenName = body.name?.trim() || nameFromEmail || "Candidate";
+    // Check Admin login first
+    if (email === getAdminEmail()) {
+      if (mode === "register") {
+        return NextResponse.json(
+          { error: "Bu email admin hisobiga biriktirilgan. 'Kirish' bo'limidan parolingiz bilan kiring." },
+          { status: 409 }
+        );
+      }
+      if (!isAdminCredentials(email, password)) {
+        return NextResponse.json(
+          { error: "Parol noto'g'ri. Iltimos, qaytadan kiriting." },
+          { status: 401 }
+        );
+      }
 
-    const birthYear =
-      typeof body.birthYear === "number" && !isNaN(body.birthYear)
-        ? body.birthYear
-        : undefined;
+      const existingAdmin = findUserByEmail(email);
+      const adminStored = upsertUser({
+        email,
+        password,
+        name: existingAdmin?.name || "Bekzod (Admin)",
+        phone: existingAdmin?.phone || phone || "",
+        plan: "elite",
+        role: "admin",
+        targetBand: existingAdmin?.targetBand ?? 8.5,
+        picture:
+          existingAdmin?.picture ||
+          `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent("Bekzod Admin")}&backgroundColor=059669`,
+      });
 
-    const age =
-      typeof body.age === "number" && !isNaN(body.age)
-        ? body.age
-        : birthYear
-          ? new Date().getFullYear() - birthYear
+      const [{ token, user }, adminToken] = await Promise.all([
+        signSessionToken({
+          sub: adminStored.id,
+          email: adminStored.email,
+          name: adminStored.name,
+          phone: adminStored.phone,
+          plan: "elite",
+          role: "admin",
+          picture: adminStored.picture,
+          birthYear: adminStored.birthYear,
+          age: adminStored.age,
+          goal: adminStored.goal,
+          targetBand: adminStored.targetBand,
+          dailyGoal: adminStored.dailyGoal,
+          examDate: adminStored.examDate,
+        }),
+        signAdminToken(adminStored.email),
+      ]);
+
+      const res = NextResponse.json({ ok: true, user, isAdmin: true });
+      res.cookies.set({
+        name: SESSION_COOKIE_NAME,
+        value: token,
+        httpOnly: true,
+        sameSite: "lax",
+        secure,
+        path: "/",
+        maxAge: SESSION_TTL_SECONDS,
+      });
+      res.cookies.set({
+        name: ADMIN_SESSION_COOKIE_NAME,
+        value: adminToken,
+        httpOnly: true,
+        sameSite: "lax",
+        secure,
+        path: "/",
+        maxAge: SESSION_TTL_SECONDS,
+      });
+      return res;
+    }
+
+    const existing = findUserByEmail(email);
+
+    // REGISTER MODE: Must be a brand new email with password + name + phone
+    if (mode === "register") {
+      if (existing) {
+        return NextResponse.json(
+          {
+            error:
+              "Bu elektron pochta bilan hisob allaqachon mavjud. Iltimos, 'Kirish' bo'limidan parolingiz bilan kiring.",
+          },
+          { status: 409 }
+        );
+      }
+
+      if (password.length < 6) {
+        return NextResponse.json(
+          { error: "Parol kamida 6 ta belgidan iborat bo'lishi kerak." },
+          { status: 400 }
+        );
+      }
+
+      const chosenName = body.name?.trim() || "";
+      if (!chosenName) {
+        return NextResponse.json(
+          { error: "Iltimos, ism va familiyangizni kiriting." },
+          { status: 400 }
+        );
+      }
+
+      if (phone.replace(/\D/g, "").length < 7) {
+        return NextResponse.json(
+          { error: "Iltimos, to'g'ri telefon raqamingizni kiriting." },
+          { status: 400 }
+        );
+      }
+
+      const birthYear =
+        typeof body.birthYear === "number" && !Number.isNaN(body.birthYear)
+          ? body.birthYear
           : undefined;
+      const age =
+        typeof body.age === "number" && !Number.isNaN(body.age)
+          ? body.age
+          : birthYear
+            ? new Date().getFullYear() - birthYear
+            : undefined;
+      const goal = body.goal?.trim() || undefined;
+      const targetBand =
+        typeof body.targetBand === "number" && !Number.isNaN(body.targetBand)
+          ? body.targetBand
+          : 7.5;
 
-    const goal = body.goal?.trim() || undefined;
-    const targetBand =
-      typeof body.targetBand === "number" && !isNaN(body.targetBand)
-        ? body.targetBand
-        : undefined;
+      const stored = upsertUser({
+        email,
+        password,
+        phone,
+        name: chosenName,
+        plan: "free",
+        role: "user",
+        birthYear,
+        age,
+        goal,
+        targetBand,
+        picture: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(chosenName)}&backgroundColor=059669`,
+      });
 
-    // Persist to database (.data/users.json)
-    const stored = upsertUser({
-      email,
-      password: body.password?.trim(),
-      name: chosenName,
-      birthYear,
-      age,
-      goal,
-      targetBand,
-      picture: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(chosenName)}&backgroundColor=059669`,
-    });
+      const { token, user } = await signSessionToken({
+        sub: stored.id,
+        email: stored.email,
+        name: stored.name,
+        phone: stored.phone,
+        plan: stored.plan || "free",
+        role: "user",
+        picture: stored.picture,
+        birthYear: stored.birthYear,
+        age: stored.age,
+        goal: stored.goal,
+        targetBand: stored.targetBand,
+        dailyGoal: stored.dailyGoal,
+        examDate: stored.examDate,
+      });
+
+      const res = NextResponse.json({ ok: true, user, isAdmin: false });
+      res.cookies.set({
+        name: SESSION_COOKIE_NAME,
+        value: token,
+        httpOnly: true,
+        sameSite: "lax",
+        secure,
+        path: "/",
+        maxAge: SESSION_TTL_SECONDS,
+      });
+      return res;
+    }
+
+    // LOGIN MODE: Must already exist and match password
+    if (!existing) {
+      return NextResponse.json(
+        {
+          error:
+            "Bu elektron pochta bilan hisob topilmadi. Avval 'Ro'yxatdan o'tish' orqali yangi hisob oching.",
+        },
+        { status: 404 }
+      );
+    }
+
+    if (!password) {
+      return NextResponse.json(
+        { error: "Iltimos, hisobingiz parolini kiriting." },
+        { status: 400 }
+      );
+    }
+
+    if (existing.password && existing.password !== password) {
+      return NextResponse.json(
+        { error: "Parol noto'g'ri. Iltimos, qaytadan tekshirib kiriting." },
+        { status: 401 }
+      );
+    }
+
+    // If legacy account had no password yet, bind this password (>= 6 chars)
+    let activeUser = existing;
+    if (!existing.password) {
+      if (password.length < 6) {
+        return NextResponse.json(
+          { error: "Parol kamida 6 ta belgidan iborat bo'lishi kerak." },
+          { status: 400 }
+        );
+      }
+      activeUser = upsertUser({
+        email: existing.email,
+        password,
+      });
+    }
 
     const { token, user } = await signSessionToken({
-      sub: stored.id,
-      email: stored.email,
-      name: stored.name,
-      picture: stored.picture,
-      birthYear: stored.birthYear,
-      age: stored.age,
-      goal: stored.goal,
-      targetBand: stored.targetBand,
+      sub: activeUser.id,
+      email: activeUser.email,
+      name: activeUser.name,
+      phone: activeUser.phone,
+      plan: activeUser.plan || "free",
+      role: activeUser.role === "admin" ? "admin" : "user",
+      picture: activeUser.picture,
+      birthYear: activeUser.birthYear,
+      age: activeUser.age,
+      goal: activeUser.goal,
+      targetBand: activeUser.targetBand,
+      dailyGoal: activeUser.dailyGoal,
+      examDate: activeUser.examDate,
     });
 
-    const res = NextResponse.json({ ok: true, user });
+    const res = NextResponse.json({
+      ok: true,
+      user,
+      isAdmin: activeUser.role === "admin",
+    });
     res.cookies.set({
       name: SESSION_COOKIE_NAME,
       value: token,
       httpOnly: true,
       sameSite: "lax",
-      secure: shouldUseSecureCookie(req),
+      secure,
       path: "/",
       maxAge: SESSION_TTL_SECONDS,
     });
@@ -125,7 +313,7 @@ export async function POST(req: NextRequest) {
 
   if (!accessToken && !credential) {
     return NextResponse.json(
-      { error: "Google hisobi yoki elektron pochta kiritilmadi." },
+      { error: "Elektron pochta yoki Google tokeni kiritilmadi." },
       { status: 400 }
     );
   }
@@ -231,6 +419,8 @@ export async function POST(req: NextRequest) {
       email,
       name: name || existing?.name,
       picture: picture || existing?.picture,
+      phone: existing?.phone,
+      plan: existing?.plan || "free",
       birthYear: existing?.birthYear,
       age: existing?.age,
       goal: existing?.goal,
@@ -241,6 +431,9 @@ export async function POST(req: NextRequest) {
       sub: stored.id,
       email: stored.email,
       name: stored.name,
+      phone: stored.phone,
+      plan: stored.plan || "free",
+      role: stored.role === "admin" ? "admin" : "user",
       picture: stored.picture,
       birthYear: stored.birthYear,
       age: stored.age,

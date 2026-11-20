@@ -29,41 +29,73 @@ export default function SettingsPage() {
   const authT = DICT[state.lang].auth;
 
   // Local form state for candidate profile
-  const [name, setName] = useState(state.profile.name || "");
-  const [birthYear, setBirthYear] = useState<number>(state.profile.birthYear ?? 2002);
-  const [goal, setGoal] = useState(state.profile.goal || "");
-  const [targetBand, setTargetBand] = useState<number>(state.profile.targetBand ?? 7.5);
+  const [name, setName] = useState(
+    state.profile.name && state.profile.name !== "Candidate"
+      ? state.profile.name
+      : state.authUser?.name || ""
+  );
+  const [phone, setPhone] = useState(
+    state.profile.phone || state.authUser?.phone || ""
+  );
+  const [birthYear, setBirthYear] = useState<number>(
+    state.profile.birthYear ?? state.authUser?.birthYear ?? 2002
+  );
+  const [goal, setGoal] = useState(
+    state.profile.goal || state.authUser?.goal || ""
+  );
+  const [targetBand, setTargetBand] = useState<number>(
+    state.profile.targetBand ?? state.authUser?.targetBand ?? 7.5
+  );
   const [examDate, setExamDate] = useState<string>(state.profile.examDate ?? "");
   const [dailyGoal, setDailyGoal] = useState<number>(state.profile.dailyGoal ?? 40);
+  const [formHydratedKey, setFormHydratedKey] = useState<string>("");
 
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Sync initial state if not dirty
+  // Sync form fields cleanly once real user session/profile hydrates
   useEffect(() => {
-    if (state.profile.name && !name) {
-      setName(state.profile.name);
+    const resolvedEmail = state.authUser?.email || "";
+    const resolvedName =
+      state.profile.name && state.profile.name !== "Candidate"
+        ? state.profile.name
+        : state.authUser?.name || "";
+    const key = `${resolvedEmail}|${resolvedName}`;
+    if (resolvedEmail && key !== formHydratedKey) {
+      setName(resolvedName);
+      setPhone(state.profile.phone || state.authUser?.phone || "");
+      setBirthYear(state.profile.birthYear ?? state.authUser?.birthYear ?? 2002);
+      setGoal(state.profile.goal || state.authUser?.goal || "");
+      setTargetBand(state.profile.targetBand ?? state.authUser?.targetBand ?? 7.5);
+      setExamDate(state.profile.examDate ?? "");
+      setDailyGoal(state.profile.dailyGoal ?? 40);
+      setFormHydratedKey(key);
     }
-    if (state.profile.birthYear && birthYear === 2002) {
-      setBirthYear(state.profile.birthYear);
-    }
-    if (state.profile.goal && !goal) {
-      setGoal(state.profile.goal);
-    }
-  }, [state.profile, name, birthYear, goal]);
+  }, [state.authUser, state.profile, formHydratedKey]);
 
   const currentYear = new Date().getFullYear();
   const calculatedAge = Math.max(12, currentYear - birthYear);
 
+  const savedName = (
+    state.profile.name && state.profile.name !== "Candidate"
+      ? state.profile.name
+      : state.authUser?.name || ""
+  ).trim();
+  const savedPhone = (state.profile.phone || state.authUser?.phone || "").trim();
+  const savedBirthYear = state.profile.birthYear ?? state.authUser?.birthYear ?? 2002;
+  const savedGoal = (state.profile.goal || state.authUser?.goal || "").trim();
+
   const isDirty =
-    name.trim() !== (state.profile.name || "").trim() ||
-    birthYear !== (state.profile.birthYear ?? 2002) ||
-    targetBand !== (state.profile.targetBand ?? 7.5) ||
-    dailyGoal !== (state.profile.dailyGoal ?? 40) ||
-    (examDate || "") !== (state.profile.examDate || "") ||
-    goal.trim() !== (state.profile.goal || "").trim();
+    Boolean(formHydratedKey) &&
+    (name.trim() !== savedName ||
+      phone.trim() !== savedPhone ||
+      birthYear !== savedBirthYear ||
+      targetBand !== (state.profile.targetBand ?? state.authUser?.targetBand ?? 7.5) ||
+      dailyGoal !== (state.profile.dailyGoal ?? 40) ||
+      (examDate || "") !== (state.profile.examDate || "") ||
+      goal.trim() !== savedGoal);
 
   const handleSaveProfile = async () => {
     const trimmedName = name.trim();
@@ -83,6 +115,7 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: trimmedName,
+          phone: phone.trim(),
           birthYear,
           age: calculatedAge,
           goal: goal.trim() || undefined,
@@ -100,6 +133,7 @@ export default function SettingsPage() {
       // Update both client profile and auth user immediately
       actions.setProfile({
         name: trimmedName,
+        phone: phone.trim(),
         birthYear,
         age: calculatedAge,
         goal: goal.trim(),
@@ -205,11 +239,16 @@ export default function SettingsPage() {
                     <ShieldCheck className="h-3.5 w-3.5" />
                     <span>{t.accountSection}</span>
                   </div>
-                  <div className="mt-0.5 text-base font-bold text-zinc-950 dark:text-zinc-50">
-                    {state.authUser.name}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-base font-bold text-zinc-950 dark:text-zinc-50">
+                    <span>{state.authUser.name}</span>
+                    <Badge tone="emerald" mono>
+                      Paket: {(state.authUser.plan || state.profile.plan || "free").toUpperCase()}
+                    </Badge>
                   </div>
                   <div className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
                     {state.authUser.email}
+                    {(state.authUser.phone || state.profile.phone) &&
+                      ` · ${state.authUser.phone || state.profile.phone}`}
                   </div>
                 </div>
               </div>
@@ -293,6 +332,25 @@ export default function SettingsPage() {
               <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
                 {t.nameHint}
               </p>
+            </div>
+
+            {/* Candidate Phone Number */}
+            <div className="sm:col-span-2">
+              <label
+                htmlFor="candidatePhone"
+                className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300"
+              >
+                Telefon raqam
+              </label>
+              <input
+                id="candidatePhone"
+                data-testid="settings-candidate-phone"
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+998 90 123 45 67"
+                className="mt-1.5 w-full max-w-md rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 font-mono text-sm font-semibold text-zinc-950 outline-none transition-all focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+              />
             </div>
 
             {/* Candidate Birth Year & Calculated Age */}

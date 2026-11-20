@@ -1,9 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   SESSION_COOKIE_NAME,
-  SESSION_TTL_SECONDS,
   shouldUseSecureCookie,
-  signSessionToken,
   verifySessionToken,
 } from "@/lib/auth-token";
 import { updateSession } from "@/utils/supabase/middleware";
@@ -11,18 +9,19 @@ import { updateSession } from "@/utils/supabase/middleware";
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // Allow public assets
+  // Allow public assets & auth endpoints
   if (
     pathname === "/tests/listening-v5-t09-map.png" ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/admin") ||
     pathname.startsWith("/auth/callback") ||
     pathname.startsWith("/api/evaluate-writing")
   ) {
     return NextResponse.next();
   }
 
-  // Fast path: Verify local HMAC session token in memory (0ms, zero network calls)
+  // Fast path: Verify real signed HMAC session cookie
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   const user = await verifySessionToken(sessionToken);
 
@@ -30,7 +29,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Check if a Supabase auth cookie exists before calling remote Supabase
+  // Optional Supabase session fallback if present
   const hasSupabaseCookie = request.cookies
     .getAll()
     .some((c) => c.name.startsWith("sb-") && c.name.includes("-auth-token"));
@@ -42,25 +41,31 @@ export async function middleware(request: NextRequest) {
         return supabaseResponse;
       }
     } catch {
-      // Fall through to instant local provisioning
+      // Fall through to auth redirect
     }
   }
 
-  // Provision instant default local session token if none exists
-  const { token } = await signSessionToken({
-    sub: "candidate-default",
-    email: "candidate@ieltsnova.uz",
-    name: "Bekzod",
-    targetBand: 7.5,
-  });
-  const response = NextResponse.next();
-  response.cookies.set(SESSION_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: shouldUseSecureCookie(request),
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS,
-  });
+  // Strictly redirect unauthenticated visitors to sign-in/register modal on "/"
+  // Never auto-provision a default/shared account!
+  const redirectUrl = request.nextUrl.clone();
+  redirectUrl.pathname = "/";
+  redirectUrl.searchParams.set("auth", "required");
+  const fullNext = `${pathname}${search}`;
+  if (fullNext.startsWith("/")) {
+    redirectUrl.searchParams.set("next", fullNext);
+  }
+
+  const response = NextResponse.redirect(redirectUrl);
+  if (sessionToken) {
+    // Clear any stale/invalid/legacy candidate-default cookie immediately
+    response.cookies.set(SESSION_COOKIE_NAME, "", {
+      httpOnly: true,
+      secure: shouldUseSecureCookie(request),
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
+    });
+  }
   return response;
 }
 

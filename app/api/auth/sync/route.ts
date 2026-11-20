@@ -36,6 +36,8 @@ export async function GET(req: NextRequest) {
     activity: stored.activity || {},
     profile: {
       name: stored.name,
+      phone: stored.phone,
+      plan: stored.plan || "free",
       birthYear: stored.birthYear,
       age: stored.age,
       goal: stored.goal,
