@@ -12,6 +12,7 @@ interface ReadingStageProps {
   passages: ReadingPassageData[];
   answers: Record<string, string>;
   onChangeAnswer: (qNum: number, value: string) => void;
+  onToggleMultiTwo: (q1: number, q2: number, letter: string) => void;
   highlights: PassageHighlight[];
   onChangeHighlights: (next: PassageHighlight[]) => void;
   onFinishReading: () => void;
@@ -21,6 +22,7 @@ export function ReadingStage({
   passages,
   answers,
   onChangeAnswer,
+  onToggleMultiTwo,
   highlights,
   onChangeHighlights,
   onFinishReading,
@@ -67,20 +69,7 @@ export function ReadingStage({
   ).length;
 
   const toggleMultiTwo = (qPair: [number, number], letter: string) => {
-    const [q1, q2] = qPair;
-    const v1 = (answers[String(q1)] || "").toUpperCase();
-    const v2 = (answers[String(q2)] || "").toUpperCase();
-    const selected = [v1, v2].filter(Boolean);
-
-    if (selected.includes(letter)) {
-      const next = selected.filter((l) => l !== letter);
-      onChangeAnswer(q1, next[0] || "");
-      onChangeAnswer(q2, next[1] || "");
-    } else {
-      const next = [...selected, letter].slice(-2);
-      onChangeAnswer(q1, next[0] || "");
-      onChangeAnswer(q2, next[1] || "");
-    }
+    onToggleMultiTwo(qPair[0], qPair[1], letter);
   };
 
   const getPassageIdxForQuestion = (qNum: number) => {

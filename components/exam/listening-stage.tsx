@@ -15,6 +15,7 @@ interface ListeningStageProps {
   parts: ListeningPartData[];
   answers: Record<string, string>;
   onChangeAnswer: (qNum: number, value: string) => void;
+  onToggleMultiTwo: (q1: number, q2: number, letter: string) => void;
   audioPartIndex: number;
   audioCurrentTime: number;
   audioStarted: boolean;
@@ -35,6 +36,7 @@ export function ListeningStage({
   parts,
   answers,
   onChangeAnswer,
+  onToggleMultiTwo,
   audioPartIndex,
   audioCurrentTime,
   audioStarted,
@@ -203,22 +205,9 @@ export function ListeningStage({
     (n) => Boolean((answers[String(n)] || "").trim())
   ).length;
 
-  // Helper for Choose TWO Letters (e.g. Q25 & Q26)
+  // Helper for Choose TWO Letters (atomic functional update in parent state)
   const toggleMultiTwo = (qPair: [number, number], letter: string) => {
-    const [q1, q2] = qPair;
-    const v1 = (answers[String(q1)] || "").toUpperCase();
-    const v2 = (answers[String(q2)] || "").toUpperCase();
-    const selected = [v1, v2].filter(Boolean);
-
-    if (selected.includes(letter)) {
-      const next = selected.filter((l) => l !== letter);
-      onChangeAnswer(q1, next[0] || "");
-      onChangeAnswer(q2, next[1] || "");
-    } else {
-      const next = [...selected, letter].slice(-2);
-      onChangeAnswer(q1, next[0] || "");
-      onChangeAnswer(q2, next[1] || "");
-    }
+    onToggleMultiTwo(qPair[0], qPair[1], letter);
   };
 
   return (
@@ -235,8 +224,8 @@ export function ListeningStage({
           if (Number.isFinite(dur)) setAudioDuration(dur);
         }}
       />
-      {/* Preload next audio part seamlessly */}
-      {nextPreloadPart && (
+      {/* Preload next audio part seamlessly once playback has begun */}
+      {isPlaying && nextPreloadPart && (
         <audio src={nextPreloadPart.audioUrl} preload="auto" className="hidden" />
       )}
 

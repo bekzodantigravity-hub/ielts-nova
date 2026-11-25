@@ -937,6 +937,21 @@ export default function ClosedCdiExamPage() {
           onChangeAnswer={(qNum, val) =>
             setListeningAnswers((prev) => ({ ...prev, [String(qNum)]: val }))
           }
+          onToggleMultiTwo={(q1, q2, letter) =>
+            setListeningAnswers((prev) => {
+              const v1 = (prev[String(q1)] || "").toUpperCase();
+              const v2 = (prev[String(q2)] || "").toUpperCase();
+              const selected = [v1, v2].filter(Boolean);
+              const next = selected.includes(letter)
+                ? selected.filter((l) => l !== letter)
+                : [...selected, letter].slice(-2);
+              return {
+                ...prev,
+                [String(q1)]: next[0] || "",
+                [String(q2)]: next[1] || "",
+              };
+            })
+          }
           audioPartIndex={audioPartIndex}
           audioCurrentTime={audioCurrentTime}
           audioStarted={audioStarted}
@@ -960,6 +975,21 @@ export default function ClosedCdiExamPage() {
           answers={readingAnswers}
           onChangeAnswer={(qNum, val) =>
             setReadingAnswers((prev) => ({ ...prev, [String(qNum)]: val }))
+          }
+          onToggleMultiTwo={(q1, q2, letter) =>
+            setReadingAnswers((prev) => {
+              const v1 = (prev[String(q1)] || "").toUpperCase();
+              const v2 = (prev[String(q2)] || "").toUpperCase();
+              const selected = [v1, v2].filter(Boolean);
+              const next = selected.includes(letter)
+                ? selected.filter((l) => l !== letter)
+                : [...selected, letter].slice(-2);
+              return {
+                ...prev,
+                [String(q1)]: next[0] || "",
+                [String(q2)]: next[1] || "",
+              };
+            })
           }
           highlights={highlights}
           onChangeHighlights={setHighlights}
