@@ -46,6 +46,7 @@ import {
 } from "@/lib/admin-local-store";
 import {
   ADMIN_SESSION_COOKIE_NAME,
+  getAdminDisplayName,
   isAdminEmail,
   SESSION_TTL_SECONDS,
   signAdminToken,
@@ -273,10 +274,11 @@ export default function AdminPanelPage() {
       } catch {}
 
       saveAdminSession(resolvedEmail, cleanPass);
+      const displayAdminName = await getAdminDisplayName(resolvedEmail);
       const seeded = upsertLocalAdminUser({
         email: resolvedEmail,
         password: cleanPass,
-        name: "Bekzod (Admin)",
+        name: displayAdminName,
         plan: "elite",
         role: "admin",
         targetBand: 8.5,

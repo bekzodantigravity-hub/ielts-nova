@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      serverNow: new Date().toISOString(),
       participant,
       exam: toPublicMockPayload(mock),
     });

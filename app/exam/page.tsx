@@ -64,6 +64,7 @@ interface PersistedExamState {
   audioCurrentTime: number;
   audioStarted: boolean;
   highlights: PassageHighlight[];
+  lobbyJoinedAt?: number;
   submissionId?: string;
   submittedAt?: string;
 }
@@ -95,6 +96,7 @@ export default function ClosedCdiExamPage() {
   const [participantId, setParticipantId] = useState("");
   const [exam, setExam] = useState<MockExamPublicPayload | null>(null);
   const [lobbyWaitingCount, setLobbyWaitingCount] = useState(1);
+  const [lobbyJoinedAt, setLobbyJoinedAt] = useState<number>(0);
 
   // Answers & progress
   const [listeningAnswers, setListeningAnswers] = useState<Record<string, string>>({});
@@ -170,6 +172,11 @@ export default function ClosedCdiExamPage() {
           setAudioCurrentTime(saved.audioCurrentTime || 0);
           setAudioStarted(Boolean(saved.audioStarted));
           setHighlights(Array.isArray(saved.highlights) ? saved.highlights : []);
+          setLobbyJoinedAt(
+            typeof saved.lobbyJoinedAt === "number"
+              ? saved.lobbyJoinedAt
+              : Date.now()
+          );
           if (saved.submissionId && saved.submittedAt) {
             setSubmissionReceipt({
               id: saved.submissionId,
@@ -214,6 +221,7 @@ export default function ClosedCdiExamPage() {
       audioCurrentTime,
       audioStarted,
       highlights,
+      lobbyJoinedAt,
       submissionId: submissionReceipt?.id,
       submittedAt: submissionReceipt?.submittedAt,
     };
@@ -238,10 +246,11 @@ export default function ClosedCdiExamPage() {
     audioCurrentTime,
     audioStarted,
     highlights,
+    lobbyJoinedAt,
     submissionReceipt,
   ]);
 
-  // 3. Proctor Lobby Sync Poller (ONLY runs while waiting in lobby — 0 load during exam!)
+  // 3. Proctor Lobby Sync Poller (ONLY runs while waiting in lobby — NEVER auto-starts from stale timestamps!)
   useEffect(() => {
     if (stage !== "lobby" || !exam) return;
 
@@ -256,30 +265,40 @@ export default function ClosedCdiExamPage() {
           ok?: boolean;
           status?: ExamRoomStatus;
           startMode?: ExamStartMode;
+          startedAt?: string | null;
           waitingCount?: number;
         };
         if (cancelled || !data.ok) return;
         if (typeof data.waitingCount === "number") {
           setLobbyWaitingCount(data.waitingCount);
         }
+        const effectiveMode = data.startMode || exam.startMode;
         if (data.startMode && data.startMode !== exam.startMode) {
           setExam((prev) =>
             prev ? { ...prev, startMode: data.startMode! } : prev
           );
         }
-        if (data.status === "started" && exam.startMode === "proctor") {
-          setStage("listening");
+        // STRICT PROCTOR GATE: Only start when the teacher pressed Start Exam for All AFTER this student entered the Waiting Lobby!
+        if (
+          effectiveMode === "proctor" &&
+          data.status === "started" &&
+          data.startedAt
+        ) {
+          const startedMs = new Date(data.startedAt).getTime();
+          if (Number.isFinite(startedMs) && startedMs > lobbyJoinedAt) {
+            setStage("listening");
+          }
         }
       } catch {}
     };
 
     void poll();
-    const interval = setInterval(() => void poll(), 2500);
+    const interval = setInterval(() => void poll(), 2000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [stage, exam, participantId]);
+  }, [stage, exam, participantId, lobbyJoinedAt]);
 
   // 4. Submit entire exam to server (official 40-pt grading + Writing Task 1 -> Admin)
   const submitFinalExam = useCallback(async () => {
@@ -484,7 +503,8 @@ export default function ClosedCdiExamPage() {
       });
       const data = (await res.json()) as {
         ok?: boolean;
-        participant?: { id: string; fullName: string };
+        serverNow?: string;
+        participant?: { id: string; fullName: string; joinedAt?: string };
         exam?: MockExamPublicPayload;
         error?: string;
       };
@@ -493,9 +513,16 @@ export default function ClosedCdiExamPage() {
         throw new Error(data.error || "Imtihonga kirib bo'lmadi.");
       }
 
+      const joinedTimestamp = new Date(
+        data.serverNow || data.participant.joinedAt || new Date().toISOString()
+      ).getTime();
+
       submittedOnceRef.current = false;
       setParticipantId(data.participant.id);
       setExam(data.exam);
+      setLobbyJoinedAt(
+        Number.isFinite(joinedTimestamp) ? joinedTimestamp : Date.now()
+      );
       setReadingSecondsLeft(data.exam.readingDurationSeconds || 3600);
       setWritingSecondsLeft(data.exam.writingDurationSeconds || 1200);
       setTransferSecondsLeft(null);
@@ -511,12 +538,8 @@ export default function ClosedCdiExamPage() {
       setTabWarningVisible(false);
       setExamPassword("");
 
-      // If Proctor already started the room, jump straight into Listening; otherwise enter Lobby
-      if (data.exam.startMode === "proctor" && data.exam.status === "started") {
-        setStage("listening");
-      } else {
-        setStage("lobby");
-      }
+      // ALWAYS enter Waiting Lobby first — NEVER auto-start without Proctor's explicit Start click!
+      setStage("lobby");
     } catch (err) {
       setEntryError(
         err instanceof Error ? err.message : "Imtihonga kirishda xatolik."
@@ -759,6 +782,14 @@ export default function ClosedCdiExamPage() {
                 <span>Start Exam</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleResetToNewCandidate}
+              className="mt-3 w-full cursor-pointer text-center text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              Chiqish / Boshqa ism bilan kirish
+            </button>
           </div>
         </div>
       </div>

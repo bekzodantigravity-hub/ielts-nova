@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   ADMIN_SESSION_COOKIE_NAME,
+  getAdminDisplayName,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
   shouldUseSecureCookie,
@@ -35,17 +36,18 @@ export async function POST(req: NextRequest) {
     }
 
     const existing = findUserByEmail(email);
+    const defaultAdminName = await getAdminDisplayName(email);
     const adminStored = upsertUser({
       email,
       password,
-      name: existing?.name || "Bekzod (Admin)",
+      name: existing?.name || defaultAdminName,
       phone: existing?.phone || "",
       plan: "elite",
       role: "admin",
       targetBand: existing?.targetBand ?? 8.5,
       picture:
         existing?.picture ||
-        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent("Bekzod Admin")}&backgroundColor=059669`,
+        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(defaultAdminName)}&backgroundColor=059669`,
     });
 
     const [adminToken, { token: userToken }] = await Promise.all([

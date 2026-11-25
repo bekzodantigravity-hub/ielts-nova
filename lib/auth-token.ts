@@ -37,7 +37,7 @@ declare global {
 }
 
 const ADMIN_VERIFICATION_SALT = "ielts-nova-admin-v1-salt-9f4c2a8b";
-const ADMIN_LOGIN_SHA256_SET = new Set<string>([
+const ADMIN_PRIMARY_LOGIN_SHA256_SET = new Set<string>([
   "b65277b13d8ea9646267935dd4ba55ad3fbe3fbf52797b3b062333a05b934c5f",
   "de94efc4417dfc49d6dc77d9f28bc70de992637af5e31cbfcb3a1ccc6b792972",
   "483a82e96ed40361820305e42089158ed7fc44a3ad85252fffcb6735a74d7124",
@@ -45,6 +45,12 @@ const ADMIN_LOGIN_SHA256_SET = new Set<string>([
 ]);
 const ADMIN_PASS_PBKDF2 =
   "111807b22bc940740753e3bc3091acc660bcb2cb00c4668e5bb4f59749cde54c";
+
+const ADMIN_SECONDARY_LOGIN_SHA256_SET = new Set<string>([
+  "6790b2416b0018525487c0f110d9ec6807058b74ca40c761f43edc11240115e2",
+]);
+const ADMIN_SECONDARY_PASS_PBKDF2 =
+  "449c393ea47f45f0d60d8d5552603f493df5401008f1c6b3dba0b59739c8ecd3";
 
 function bytesToHex(bytes: Uint8Array): string {
   let out = "";
@@ -106,7 +112,20 @@ export async function isAdminEmail(email: string): Promise<boolean> {
     return true;
   }
   const digest = await sha256Hex(`${ADMIN_VERIFICATION_SALT}:${norm}`);
-  return ADMIN_LOGIN_SHA256_SET.has(digest);
+  return (
+    ADMIN_PRIMARY_LOGIN_SHA256_SET.has(digest) ||
+    ADMIN_SECONDARY_LOGIN_SHA256_SET.has(digest)
+  );
+}
+
+export async function getAdminDisplayName(email: string): Promise<string> {
+  const norm = email.trim().toLowerCase();
+  if (!norm) return "Admin";
+  const digest = await sha256Hex(`${ADMIN_VERIFICATION_SALT}:${norm}`);
+  if (ADMIN_SECONDARY_LOGIN_SHA256_SET.has(digest)) {
+    return "Diyorbek Zokirov (Admin)";
+  }
+  return "Bekzod (Admin)";
 }
 
 export async function verifyAdminCredentials(
@@ -126,11 +145,26 @@ export async function verifyAdminCredentials(
     return true;
   }
 
-  const [emailOk, derivedPass] = await Promise.all([
-    isAdminEmail(normEmail),
+  const [emailDigest, derivedPass] = await Promise.all([
+    sha256Hex(`${ADMIN_VERIFICATION_SALT}:${normEmail}`),
     pbkdf2Hex(cleanPass, ADMIN_VERIFICATION_SALT),
   ]);
-  return emailOk && derivedPass === ADMIN_PASS_PBKDF2;
+
+  if (
+    ADMIN_PRIMARY_LOGIN_SHA256_SET.has(emailDigest) &&
+    derivedPass === ADMIN_PASS_PBKDF2
+  ) {
+    return true;
+  }
+
+  if (
+    ADMIN_SECONDARY_LOGIN_SHA256_SET.has(emailDigest) &&
+    derivedPass === ADMIN_SECONDARY_PASS_PBKDF2
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
