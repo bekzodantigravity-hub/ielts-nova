@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Check,
+  ClipboardList,
   Crown,
   Edit3,
   Eye,
@@ -22,12 +23,15 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Trophy,
   User,
   Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AdminMockExamsTab } from "@/components/admin/admin-mock-exams-tab";
+import { AdminMockResultsTab } from "@/components/admin/admin-mock-results-tab";
 import { BrandLogo } from "@/components/brand";
 import {
   type AdminUserRow,
@@ -79,6 +83,9 @@ export default function AdminPanelPage() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
+  const [activeSection, setActiveSection] = useState<
+    "mock_exams" | "mock_results" | "users"
+  >("mock_exams");
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("");
@@ -543,33 +550,29 @@ export default function AdminPanelPage() {
   // =========================================================================
   if (!authenticated) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#070D12] px-4 py-10 text-zinc-100">
-        <div className="pointer-events-none fixed inset-0 bg-gradient-to-b from-emerald-500/12 via-transparent to-transparent" />
-        <div className="pointer-events-none fixed -top-40 left-1/2 h-96 w-[600px] -translate-x-1/2 rounded-full bg-emerald-500/15 blur-3xl" />
-
-        <div className="relative z-10 w-full max-w-md">
+      <div className="flex min-h-screen items-center justify-center bg-[#09090b] px-4 py-10 text-zinc-100">
+        <div className="w-full max-w-md">
           <div className="mb-5 flex items-center justify-between">
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:border-emerald-500/40 hover:text-emerald-300"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#111113] px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:border-zinc-600 hover:text-white"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               <span>Bosh sahifaga</span>
             </Link>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/70 px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-[#111113] px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-400">
               <Shield className="h-3.5 w-3.5" />
               SHAXSIY ADMINLAR
             </span>
           </div>
 
-          <div className="overflow-hidden rounded-3xl border border-emerald-500/25 bg-zinc-950/90 shadow-2xl backdrop-blur-xl">
-            <div className="h-1.5 w-full bg-gradient-to-r from-emerald-600 via-emerald-400 to-teal-500" />
+          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-[#111113] shadow-2xl">
             <div className="p-7">
               <div className="mb-6 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/35 bg-emerald-500/15 text-emerald-400 shadow-lg shadow-emerald-500/15">
-                  <ShieldCheck className="h-7 w-7" />
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-700 bg-[#18181b] text-white">
+                  <ShieldCheck className="h-6 w-6" />
                 </div>
-                <h1 className="mt-4 text-xl font-black tracking-tight text-white">
+                <h1 className="mt-4 text-xl font-bold tracking-tight text-white">
                   Shaxsiy Adminlar Paneli
                 </h1>
                 <p className="mt-1.5 text-xs text-zinc-400">
@@ -579,11 +582,11 @@ export default function AdminPanelPage() {
 
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-zinc-300">
+                  <label className="block text-xs font-semibold text-zinc-300">
                     Login
                   </label>
                   <div className="relative mt-1.5">
-                    <User className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/80" />
+                    <User className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-zinc-500" />
                     <input
                       type="text"
                       data-testid="admin-login-email"
@@ -593,17 +596,17 @@ export default function AdminPanelPage() {
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
                       placeholder="Login"
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-3 pr-4 pl-10 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
+                      className="w-full rounded-lg border border-zinc-800 bg-[#18181b] py-3 pr-4 pl-10 text-sm font-medium text-white placeholder:text-zinc-600 focus:border-zinc-400 focus:outline-none"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-zinc-300">
+                  <label className="block text-xs font-semibold text-zinc-300">
                     Parol
                   </label>
                   <div className="relative mt-1.5">
-                    <Lock className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-emerald-400/80" />
+                    <Lock className="pointer-events-none absolute top-3.5 left-3.5 h-4 w-4 text-zinc-500" />
                     <input
                       type={showLoginPass ? "text" : "password"}
                       data-testid="admin-login-password"
@@ -612,7 +615,7 @@ export default function AdminPanelPage() {
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
                       placeholder="Parol"
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-900 py-3 pr-10 pl-10 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none"
+                      className="w-full rounded-lg border border-zinc-800 bg-[#18181b] py-3 pr-10 pl-10 text-sm font-medium text-white placeholder:text-zinc-600 focus:border-zinc-400 focus:outline-none"
                     />
                     <button
                       type="button"
@@ -631,7 +634,7 @@ export default function AdminPanelPage() {
                 {loginError && (
                   <div
                     data-testid="admin-login-error"
-                    className="flex items-start gap-2 rounded-xl border border-red-500/35 bg-red-500/10 p-3 text-xs font-medium text-red-300"
+                    className="flex items-start gap-2 rounded-lg border border-red-900/70 bg-red-950/30 p-3 text-xs font-medium text-red-300"
                   >
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{loginError}</span>
@@ -642,7 +645,7 @@ export default function AdminPanelPage() {
                   type="submit"
                   data-testid="admin-login-submit"
                   disabled={loginLoading}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-500 disabled:opacity-60 cursor-pointer"
+                  className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-bold text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-60"
                 >
                   <ShieldCheck className="h-4 w-4" />
                   <span>
@@ -661,7 +664,7 @@ export default function AdminPanelPage() {
   // AUTHENTICATED ADMIN DASHBOARD
   // =========================================================================
   return (
-    <div className="min-h-screen bg-[#FAFAFA] text-zinc-950 dark:bg-[#09090B] dark:text-zinc-50">
+    <div className="dark min-h-screen bg-[#09090b] text-zinc-100">
       {/* Toast Notification */}
       <AnimatePresence>
         {toast && (
@@ -670,10 +673,10 @@ export default function AdminPanelPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -16 }}
             className={cn(
-              "fixed top-20 right-5 z-50 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-bold shadow-lg backdrop-blur-md",
+              "fixed top-20 right-5 z-50 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-xs font-bold shadow-xl backdrop-blur-md",
               toast.type === "ok"
-                ? "border-emerald-500/40 bg-emerald-600 text-white"
-                : "border-red-500/40 bg-red-600 text-white"
+                ? "border-zinc-700 bg-white text-zinc-950"
+                : "border-red-800 bg-red-950 text-red-200"
             )}
           >
             {toast.type === "ok" ? (
@@ -686,25 +689,33 @@ export default function AdminPanelPage() {
         )}
       </AnimatePresence>
 
-      {/* Top Sticky Admin Header */}
-      <header className="sticky top-0 z-30 border-b border-zinc-200/90 bg-white/95 px-4 py-3.5 backdrop-blur-md sm:px-6 dark:border-zinc-800/90 dark:bg-[#111113]/95">
+      {/* Top Sticky Serious Dark Admin Header */}
+      <header className="sticky top-0 z-30 border-b border-zinc-800 bg-[#111113]/95 px-4 py-3 backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <BrandLogo href="/dashboard" subtitle="SHAXSIY ADMINLAR" />
-            <span className="hidden items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-700 sm:inline-flex dark:text-emerald-400">
+            <BrandLogo href="/dashboard" subtitle="CDI ADMIN" />
+            <span className="hidden items-center gap-1.5 rounded border border-zinc-700 bg-[#18181b] px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-300 sm:inline-flex">
               <ShieldCheck className="h-3 w-3" />
-              SUPER ADMIN
+              PROCTOR &amp; ADMIN
             </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="hidden rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] font-semibold text-zinc-600 md:inline dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+            <span className="hidden rounded-md border border-zinc-800 bg-[#18181b] px-2.5 py-1.5 font-mono text-[11px] font-medium text-zinc-400 md:inline">
               {adminEmail}
             </span>
 
             <Link
+              href="/exam"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-700 bg-[#18181b] px-3 text-xs font-semibold text-zinc-200 hover:border-zinc-500 hover:text-white"
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">/exam Zali</span>
+            </Link>
+
+            <Link
               href="/dashboard"
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-emerald-500/40 hover:text-emerald-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#18181b] px-3 text-xs font-semibold text-zinc-300 hover:border-zinc-600 hover:text-white"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Kabinet</span>
@@ -712,34 +723,79 @@ export default function AdminPanelPage() {
 
             <button
               type="button"
-              onClick={() => actions.toggleTheme()}
-              aria-label="Mavzu"
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:border-emerald-500/40 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 cursor-pointer"
-            >
-              {mounted && appState.theme === "dark" ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </button>
-
-            <button
-              type="button"
               data-testid="admin-logout-btn"
               onClick={() => void handleAdminLogout()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300 cursor-pointer"
+              className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#18181b] px-3 text-xs font-semibold text-zinc-300 hover:border-red-800 hover:bg-red-950/40 hover:text-red-300"
             >
               <LogOut className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Chiqish</span>
             </button>
           </div>
         </div>
+
+        {/* Admin Section Tabs */}
+        <div className="mx-auto mt-3 flex max-w-7xl flex-wrap items-center gap-2 border-t border-zinc-800/80 pt-3">
+          <button
+            type="button"
+            data-testid="admin-tab-mock-exams"
+            onClick={() => setActiveSection("mock_exams")}
+            className={cn(
+              "inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold transition",
+              activeSection === "mock_exams"
+                ? "bg-white text-zinc-950"
+                : "border border-zinc-800 bg-[#18181b] text-zinc-400 hover:border-zinc-600 hover:text-white"
+            )}
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            <span>Mock Exams</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="admin-tab-mock-results"
+            onClick={() => setActiveSection("mock_results")}
+            className={cn(
+              "inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold transition",
+              activeSection === "mock_results"
+                ? "bg-white text-zinc-950"
+                : "border border-zinc-800 bg-[#18181b] text-zinc-400 hover:border-zinc-600 hover:text-white"
+            )}
+          >
+            <Trophy className="h-3.5 w-3.5" />
+            <span>Mock Natijalari</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="admin-tab-users"
+            onClick={() => setActiveSection("users")}
+            className={cn(
+              "inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold transition",
+              activeSection === "users"
+                ? "bg-white text-zinc-950"
+                : "border border-zinc-800 bg-[#18181b] text-zinc-400 hover:border-zinc-600 hover:text-white"
+            )}
+          >
+            <Users className="h-3.5 w-3.5" />
+            <span>Foydalanuvchilar ({stats.total})</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Admin Workspace */}
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        {/* Title Row */}
-        <div className="flex flex-wrap items-end justify-between gap-4">
+        {activeSection === "mock_exams" && (
+          <AdminMockExamsTab onToast={showToast} />
+        )}
+
+        {activeSection === "mock_results" && (
+          <AdminMockResultsTab onToast={showToast} />
+        )}
+
+        {activeSection === "users" && (
+          <>
+            {/* Title Row */}
+            <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-black tracking-tight text-zinc-950 sm:text-3xl dark:text-white">
               Shaxsiy Adminlar — Foydalanuvchilar Boshqaruvi
@@ -1063,6 +1119,8 @@ export default function AdminPanelPage() {
             </table>
           </div>
         </div>
+          </>
+        )}
       </main>
 
       {/* =====================================================================
