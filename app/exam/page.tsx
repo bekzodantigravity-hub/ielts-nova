@@ -5,13 +5,16 @@ import {
   CheckCircle2,
   Clock,
   Lock,
+  Moon,
   Play,
   ShieldAlert,
+  Sun,
   User,
   Users,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ListeningStage } from "@/components/exam/listening-stage";
+import type { ExamTheme } from "@/components/exam/question-highlight-area";
 import type { PassageHighlight } from "@/components/exam/reading-highlight-pane";
 import { ReadingStage } from "@/components/exam/reading-stage";
 import { WritingStage } from "@/components/exam/writing-stage";
@@ -66,6 +69,7 @@ interface PersistedExamState {
 }
 
 const EXAM_STORAGE_KEY = "ielts_nova_cdi_exam_state_v1";
+const EXAM_THEME_STORAGE_KEY = "ielts_nova_cdi_theme_v1";
 
 function formatClock(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
@@ -76,6 +80,7 @@ function formatClock(sec: number): string {
 
 export default function ClosedCdiExamPage() {
   const [hydrated, setHydrated] = useState(false);
+  const [examTheme, setExamTheme] = useState<ExamTheme>("light");
   const [availableMocks, setAvailableMocks] = useState<MockListItem[]>([]);
   const [selectedMockId, setSelectedMockId] = useState(MOCK_1_ID);
 
@@ -123,8 +128,14 @@ export default function ClosedCdiExamPage() {
   const isActiveExam =
     stage === "listening" || stage === "reading" || stage === "writing";
 
-  // 1. Load available mocks list + restore F5 persisted state
+  // 1. Load saved theme + available mocks list + restore F5 persisted state
   useEffect(() => {
+    try {
+      const savedTheme = window.localStorage.getItem(EXAM_THEME_STORAGE_KEY);
+      if (savedTheme === "dark" || savedTheme === "light") {
+        setExamTheme(savedTheme);
+      }
+    } catch {}
     try {
       const raw = window.localStorage.getItem(EXAM_STORAGE_KEY);
       if (raw) {
@@ -403,7 +414,11 @@ export default function ClosedCdiExamPage() {
     };
 
     const onContextMenu = (e: MouseEvent) => {
-      // Allow right-click ONLY if user has selected text in Reading (optional), otherwise block completely
+      // Allow right-click ONLY when text is selected so the CDI Highlight / Note menu triggers cleanly
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) {
+        return;
+      }
       e.preventDefault();
     };
 
@@ -824,18 +839,58 @@ export default function ClosedCdiExamPage() {
     (stage === "reading" && readingSecondsLeft <= 300) ||
     (stage === "writing" && writingSecondsLeft <= 180);
 
+  const toggleExamTheme = () => {
+    setExamTheme((prev) => {
+      const next: ExamTheme = prev === "light" ? "dark" : "light";
+      try {
+        window.localStorage.setItem(EXAM_THEME_STORAGE_KEY, next);
+      } catch {}
+      return next;
+    });
+  };
+
+  const isDark = examTheme === "dark";
+  const stageSubtitle =
+    stage === "listening"
+      ? "Listening test"
+      : stage === "reading"
+        ? "Reading test — 60:00"
+        : "Writing Task 1 — 20:00";
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[#09090b] text-zinc-100 select-none">
-      {/* Official Serious CDI Top Bar */}
-      <header className="flex h-13 shrink-0 items-center justify-between border-b border-zinc-800 bg-[#111113] px-5">
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-xs font-bold tracking-widest text-white uppercase">
-            IELTS NOVA CDI
+    <div
+      data-exam-theme={examTheme}
+      className={`flex h-screen flex-col overflow-hidden ${
+        isDark ? "bg-[#0b192f] text-[#f1f5f9]" : "bg-white text-[#111827]"
+      }`}
+    >
+      {/* Official IDP / British Council CDI Top Bar (Matches Screenshot 3 & 4) */}
+      <header
+        className={`flex h-14 shrink-0 items-center justify-between border-b px-5 ${
+          isDark
+            ? "border-[#1d3456] bg-[#0a1628] text-white"
+            : "border-[#e5e7eb] bg-white text-[#111827]"
+        }`}
+      >
+        <div className="flex items-center gap-3.5">
+          <span
+            className={`font-sans text-2xl font-black tracking-tight select-none ${
+              isDark ? "text-[#ef233c]" : "text-[#d91e2a]"
+            }`}
+          >
+            IELTS
+            <sup className="ml-0.5 text-[10px] font-bold">™</sup>
           </span>
-          <span className="hidden h-4 w-px bg-zinc-800 sm:inline-block" />
-          <span className="hidden text-xs font-medium text-zinc-400 sm:inline">
-            {fullName}
-          </span>
+          <div className="leading-tight">
+            <p className="text-sm font-bold">{fullName}</p>
+            <p
+              className={`text-[11px] ${
+                isDark ? "text-[#94a3b8]" : "text-[#6b7280]"
+              }`}
+            >
+              {stageSubtitle}
+            </p>
+          </div>
         </div>
 
         {/* Stage Indicator Pills (Non-clickable sequential flow) */}
@@ -857,8 +912,12 @@ export default function ClosedCdiExamPage() {
               key={s.id}
               className={`rounded px-2.5 py-1 font-mono text-[11px] font-semibold ${
                 stage === s.id
-                  ? "bg-white text-zinc-950"
-                  : "border border-zinc-800 bg-[#18181b] text-zinc-500"
+                  ? isDark
+                    ? "bg-white text-[#091529]"
+                    : "bg-[#111827] text-white"
+                  : isDark
+                    ? "border border-[#1f3a63] bg-[#0e203b] text-[#64748b]"
+                    : "border border-[#e5e7eb] bg-[#f9fafb] text-[#9ca3af]"
               }`}
             >
               {s.label}
@@ -866,28 +925,61 @@ export default function ClosedCdiExamPage() {
           ))}
         </div>
 
-        {/* Countdown Clock & Anti-Cheat Status */}
-        <div className="flex items-center gap-3">
+        {/* Right Controls: Tab-Switch Badge + Timer + Light/Dark Navy Toggle */}
+        <div className="flex items-center gap-2.5">
           {tabSwitchCount > 0 && (
             <span
               data-testid="tab-switch-badge"
-              className="inline-flex items-center gap-1 rounded border border-red-900/70 bg-red-950/40 px-2.5 py-1 font-mono text-[11px] font-semibold text-red-300"
+              className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-mono text-[11px] font-semibold ${
+                isDark
+                  ? "border-red-800/80 bg-red-950/50 text-red-300"
+                  : "border-red-300 bg-red-50 text-red-700"
+              }`}
             >
               <ShieldAlert className="h-3.5 w-3.5" />
               <span>Tab: {tabSwitchCount}</span>
             </span>
           )}
+
           <div
             data-testid="exam-timer-display"
             className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1 font-mono text-sm font-bold ${
               isTimerLow
-                ? "border-red-700 bg-red-950/50 text-red-200"
-                : "border-zinc-700 bg-[#18181b] text-white"
+                ? isDark
+                  ? "border-red-700 bg-red-950/60 text-red-200"
+                  : "border-red-400 bg-red-50 text-red-700"
+                : isDark
+                  ? "border-[#284773] bg-[#0e203b] text-white"
+                  : "border-[#d1d5db] bg-[#f9fafb] text-[#111827]"
             }`}
           >
-            <Clock className="h-3.5 w-3.5 text-zinc-400" />
+            <Clock className="h-3.5 w-3.5 opacity-70" />
             <span>{activeTimer}</span>
           </div>
+
+          <button
+            type="button"
+            data-testid="exam-theme-toggle"
+            onClick={toggleExamTheme}
+            title={isDark ? "Light rejimga o'tish" : "Dark (Navy) rejimga o'tish"}
+            className={`inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-semibold transition ${
+              isDark
+                ? "border-[#284773] bg-[#0e203b] text-[#e2e8f0] hover:border-[#60a5fa]"
+                : "border-[#d1d5db] bg-white text-[#374151] hover:bg-[#f3f4f6]"
+            }`}
+          >
+            {isDark ? (
+              <>
+                <Sun className="h-3.5 w-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Light</span>
+              </>
+            ) : (
+              <>
+                <Moon className="h-3.5 w-3.5 text-[#1e3a8a]" />
+                <span className="hidden sm:inline">Dark</span>
+              </>
+            )}
+          </button>
         </div>
       </header>
 
@@ -895,7 +987,11 @@ export default function ClosedCdiExamPage() {
       {tabWarningVisible && (
         <div
           data-testid="tab-switch-warning"
-          className="flex items-center justify-between border-b border-red-900/60 bg-red-950/60 px-5 py-2 text-xs text-red-200"
+          className={`flex items-center justify-between border-b px-5 py-2 text-xs ${
+            isDark
+              ? "border-red-900/70 bg-red-950/70 text-red-200"
+              : "border-red-200 bg-red-50 text-red-800"
+          }`}
         >
           <div className="flex items-center gap-2 font-semibold">
             <ShieldAlert className="h-4 w-4 shrink-0" />
@@ -908,7 +1004,11 @@ export default function ClosedCdiExamPage() {
           <button
             type="button"
             onClick={() => setTabWarningVisible(false)}
-            className="cursor-pointer rounded border border-red-800 px-2 py-0.5 text-[11px] hover:bg-red-900/50"
+            className={`cursor-pointer rounded border px-2 py-0.5 text-[11px] font-semibold ${
+              isDark
+                ? "border-red-800 hover:bg-red-900/50"
+                : "border-red-300 hover:bg-red-100"
+            }`}
           >
             Tushundim
           </button>
@@ -932,6 +1032,7 @@ export default function ClosedCdiExamPage() {
       {/* Stage Body */}
       {stage === "listening" && (
         <ListeningStage
+          theme={examTheme}
           parts={exam.listeningParts}
           answers={listeningAnswers}
           onChangeAnswer={(qNum, val) =>
@@ -971,6 +1072,7 @@ export default function ClosedCdiExamPage() {
 
       {stage === "reading" && (
         <ReadingStage
+          theme={examTheme}
           passages={exam.readingPassages}
           answers={readingAnswers}
           onChangeAnswer={(qNum, val) =>
@@ -999,6 +1101,7 @@ export default function ClosedCdiExamPage() {
 
       {stage === "writing" && (
         <WritingStage
+          theme={examTheme}
           writingMode={exam.writingMode}
           task1={exam.writingTask1}
           task2={exam.writingTask2}

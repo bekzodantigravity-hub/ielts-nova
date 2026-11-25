@@ -3,6 +3,7 @@
 import { Highlighter, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReadingParagraph } from "@/lib/exam-types";
+import type { ExamTheme } from "./question-highlight-area";
 
 export interface PassageHighlight {
   id: string;
@@ -15,10 +16,10 @@ export interface PassageHighlight {
 }
 
 interface ReadingHighlightPaneProps {
+  theme: ExamTheme;
   passageNumber: number;
   title: string;
   subtitle?: string;
-  timeHint: string;
   paragraphs: ReadingParagraph[];
   highlights: PassageHighlight[];
   onChangeHighlights: (next: PassageHighlight[]) => void;
@@ -33,7 +34,11 @@ interface SelectionMenuState {
   text: string;
 }
 
-function getParagraphOffset(container: HTMLElement, targetNode: Node, targetOffset: number): number {
+function getParagraphOffset(
+  container: HTMLElement,
+  targetNode: Node,
+  targetOffset: number
+): number {
   const range = document.createRange();
   range.selectNodeContents(container);
   range.setEnd(targetNode, targetOffset);
@@ -41,10 +46,10 @@ function getParagraphOffset(container: HTMLElement, targetNode: Node, targetOffs
 }
 
 export function ReadingHighlightPane({
+  theme,
   passageNumber,
   title,
   subtitle,
-  timeHint,
   paragraphs,
   highlights,
   onChangeHighlights,
@@ -53,6 +58,10 @@ export function ReadingHighlightPane({
   const [menu, setMenu] = useState<SelectionMenuState | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+
+  const isDark = theme === "dark";
+  const highlightBg = isDark ? "#f97316" : "#fbbf24";
+  const highlightFg = isDark ? "#ffffff" : "#111827";
 
   const passageHighlights = highlights.filter(
     (h) => h.passage === passageNumber
@@ -63,7 +72,7 @@ export function ReadingHighlightPane({
     setActiveNoteId(null);
   }, [passageNumber]);
 
-  const handleMouseUp = useCallback(() => {
+  const captureSelection = useCallback(() => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       setMenu(null);
@@ -117,7 +126,10 @@ export function ReadingHighlightPane({
 
     const rect = range.getBoundingClientRect();
     setMenu({
-      x: Math.max(16, Math.min(window.innerWidth - 220, rect.left + rect.width / 2 - 90)),
+      x: Math.max(
+        16,
+        Math.min(window.innerWidth - 220, rect.left + rect.width / 2 - 90)
+      ),
       y: Math.max(16, rect.top - 48),
       paragraphIndex,
       start,
@@ -129,7 +141,6 @@ export function ReadingHighlightPane({
   const addHighlight = (withNote: boolean) => {
     if (!menu) return;
     const id = `hl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    // Remove overlapping highlights in the same paragraph so spans stay clean
     const filtered = highlights.filter(
       (h) =>
         !(
@@ -198,9 +209,11 @@ export function ReadingHighlightPane({
               setActiveNoteId(h.id);
               setNoteDraft(h.note || "");
             }}
-            style={{ backgroundColor: "#fef08a", color: "#09090b" }}
+            style={{ backgroundColor: highlightBg, color: highlightFg }}
             className="cursor-pointer rounded-xs px-0.5 py-0 font-medium"
-            title={h.note ? `Eslatma: ${h.note}` : "Eslatma qo'shish yoki o'chirish"}
+            title={
+              h.note ? `Eslatma: ${h.note}` : "Eslatma qo'shish yoki o'chirish"
+            }
           >
             {text.slice(s, e)}
             {h.note ? (
@@ -228,16 +241,37 @@ export function ReadingHighlightPane({
   return (
     <div
       ref={containerRef}
-      onMouseUp={handleMouseUp}
-      className="relative h-full overflow-y-auto bg-[#0e0e11] px-6 py-6 text-zinc-200 select-text"
+      onMouseUp={captureSelection}
+      onContextMenu={(e) => {
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim()) {
+          e.preventDefault();
+          captureSelection();
+        }
+      }}
+      className={`relative h-full overflow-y-auto px-7 py-6 select-text ${
+        isDark ? "bg-[#0b192f] text-[#e2e8f0]" : "bg-white text-[#111827]"
+      }`}
     >
       <div className="mx-auto max-w-3xl">
-        <div className="mb-4 flex items-center justify-between border-b border-zinc-800 pb-3">
-          <div>
-            <p className="font-mono text-[11px] font-semibold tracking-widest text-zinc-500 uppercase">
-              READING PASSAGE {passageNumber}
-            </p>
-            <p className="mt-1 text-xs text-zinc-400">{timeHint}</p>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <h2
+              className={`text-xl font-bold tracking-tight ${
+                isDark ? "text-white" : "text-[#111827]"
+              }`}
+            >
+              {title}
+            </h2>
+            {subtitle && (
+              <p
+                className={`mt-2 text-center text-sm italic ${
+                  isDark ? "text-[#94a3b8]" : "text-[#4b5563]"
+                }`}
+              >
+                {subtitle}
+              </p>
+            )}
           </div>
           {passageHighlights.length > 0 && (
             <button
@@ -247,31 +281,37 @@ export function ReadingHighlightPane({
                   highlights.filter((h) => h.passage !== passageNumber)
                 )
               }
-              className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+              className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded border px-2.5 py-1 text-[11px] font-medium ${
+                isDark
+                  ? "border-[#284773] bg-[#0e203b] text-[#cbd5e1] hover:border-[#4b72aa]"
+                  : "border-[#d1d5db] bg-[#f9fafb] text-[#374151] hover:bg-[#f3f4f6]"
+              }`}
             >
               <Trash2 className="h-3 w-3" />
-              <span>Belgilarni tozalash ({passageHighlights.length})</span>
+              <span>Tozalash ({passageHighlights.length})</span>
             </button>
           )}
         </div>
 
-        <h2 className="text-xl font-bold tracking-tight text-white">{title}</h2>
-        {subtitle && (
-          <p className="mt-1.5 text-sm italic text-zinc-400">{subtitle}</p>
-        )}
-
-        <div className="mt-5 space-y-4 text-[15px] leading-7 text-zinc-200">
+        <div
+          className={`mt-5 space-y-4 text-[15.5px] leading-[1.72] ${
+            isDark ? "text-[#e2e8f0]" : "text-[#1f2937]"
+          }`}
+        >
           {paragraphs.map((para, idx) => (
             <div key={idx} className="flex items-start gap-3">
               {para.label && (
-                <span className="mt-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-900 font-mono text-xs font-bold text-white select-none">
+                <span
+                  className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border font-mono text-xs font-bold select-none ${
+                    isDark
+                      ? "border-[#3a5c8d] bg-[#102340] text-white"
+                      : "border-[#9ca3af] bg-[#f3f4f6] text-[#111827]"
+                  }`}
+                >
                   {para.label}
                 </span>
               )}
-              <p
-                data-para-index={idx}
-                className="flex-1 text-zinc-200"
-              >
+              <p data-para-index={idx} className="flex-1">
                 {renderParagraphText(para.text, idx)}
               </p>
             </div>
@@ -280,8 +320,18 @@ export function ReadingHighlightPane({
 
         {/* Saved Notes Panel */}
         {passageHighlights.some((h) => h.note) && (
-          <div className="mt-8 rounded-lg border border-zinc-800 bg-[#141417] p-4">
-            <p className="font-mono text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
+          <div
+            className={`mt-8 rounded-lg border p-4 ${
+              isDark
+                ? "border-[#1f3a63] bg-[#0e203b]"
+                : "border-[#e5e7eb] bg-[#f9fafb]"
+            }`}
+          >
+            <p
+              className={`font-mono text-[11px] font-semibold tracking-wider uppercase ${
+                isDark ? "text-[#94a3b8]" : "text-[#6b7280]"
+              }`}
+            >
               Eslatmalar (Notes)
             </p>
             <div className="mt-2.5 space-y-2">
@@ -290,19 +340,23 @@ export function ReadingHighlightPane({
                 .map((h) => (
                   <div
                     key={h.id}
-                    className="flex items-start justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs"
+                    className={`flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-xs ${
+                      isDark
+                        ? "border-[#284773] bg-[#091529] text-[#e2e8f0]"
+                        : "border-[#e5e7eb] bg-white text-[#111827]"
+                    }`}
                   >
                     <div>
-                      <p className="text-zinc-400 italic">
+                      <p className="italic opacity-70">
                         &ldquo;{h.text.slice(0, 80)}
                         {h.text.length > 80 ? "..." : ""}&rdquo;
                       </p>
-                      <p className="mt-1 text-zinc-100">{h.note}</p>
+                      <p className="mt-1 font-medium">{h.note}</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => removeHighlight(h.id)}
-                      className="cursor-pointer text-zinc-500 hover:text-zinc-200"
+                      className="cursor-pointer opacity-60 hover:opacity-100"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -319,27 +373,37 @@ export function ReadingHighlightPane({
           data-testid="reading-highlight-toolbar"
           style={{ left: menu.x, top: menu.y }}
           onMouseDown={(e) => e.preventDefault()}
-          className="fixed z-50 flex items-center gap-1 rounded-lg border border-zinc-700 bg-[#18181b] p-1 shadow-2xl"
+          className={`fixed z-50 flex items-center gap-1 rounded-lg border p-1 shadow-2xl ${
+            isDark
+              ? "border-[#2c4a75] bg-[#0e203b] text-white"
+              : "border-[#d1d5db] bg-white text-[#111827]"
+          }`}
         >
           <button
             type="button"
             data-testid="highlight-yellow-btn"
             onClick={() => addHighlight(false)}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-800"
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+              isDark ? "hover:bg-[#1a335a]" : "hover:bg-[#f3f4f6]"
+            }`}
           >
             <span
-              className="inline-block h-3 w-3 rounded-xs border border-zinc-600"
-              style={{ backgroundColor: "#fef08a" }}
+              className="inline-block h-3 w-3 rounded-xs border border-black/20"
+              style={{ backgroundColor: highlightBg }}
             />
             <Highlighter className="h-3.5 w-3.5" />
             <span>Highlight</span>
           </button>
-          <div className="h-4 w-px bg-zinc-700" />
+          <div
+            className={`h-4 w-px ${isDark ? "bg-[#2c4a75]" : "bg-[#e5e7eb]"}`}
+          />
           <button
             type="button"
             data-testid="highlight-note-btn"
             onClick={() => addHighlight(true)}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold text-zinc-100 hover:bg-zinc-800"
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+              isDark ? "hover:bg-[#1a335a]" : "hover:bg-[#f3f4f6]"
+            }`}
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
             <span>Note</span>
@@ -351,25 +415,33 @@ export function ReadingHighlightPane({
       {activeHighlight && (
         <div
           onClick={() => setActiveNoteId(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-xl border border-zinc-700 bg-[#141417] p-5 shadow-2xl"
+            className={`w-full max-w-md rounded-xl border p-5 shadow-2xl ${
+              isDark
+                ? "border-[#2c4a75] bg-[#0e203b] text-white"
+                : "border-[#d1d5db] bg-white text-[#111827]"
+            }`}
           >
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-white">
-                Highlight &amp; Eslatma (Note)
-              </h4>
+              <h4 className="text-sm font-bold">Highlight &amp; Eslatma (Note)</h4>
               <button
                 type="button"
                 onClick={() => setActiveNoteId(null)}
-                className="cursor-pointer text-zinc-400 hover:text-white"
+                className="cursor-pointer opacity-70 hover:opacity-100"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="mt-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-400 italic">
+            <p
+              className={`mt-2 rounded-md border px-3 py-2 text-xs italic ${
+                isDark
+                  ? "border-[#1f3a63] bg-[#091529] text-[#cbd5e1]"
+                  : "border-[#e5e7eb] bg-[#f9fafb] text-[#4b5563]"
+              }`}
+            >
               &ldquo;{activeHighlight.text.slice(0, 140)}&rdquo;
             </p>
             <textarea
@@ -377,13 +449,21 @@ export function ReadingHighlightPane({
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="Eslatma yozing..."
-              className="mt-3 w-full rounded-lg border border-zinc-700 bg-[#09090b] px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-zinc-400 focus:outline-none"
+              className={`mt-3 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none ${
+                isDark
+                  ? "border-[#2c4a75] bg-[#060f1e] text-white placeholder:text-[#64748b] focus:border-[#60a5fa]"
+                  : "border-[#d1d5db] bg-white text-[#111827] placeholder:text-[#9ca3af] focus:border-[#2563eb]"
+              }`}
             />
             <div className="mt-4 flex items-center justify-between">
               <button
                 type="button"
                 onClick={() => removeHighlight(activeHighlight.id)}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:bg-zinc-800"
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  isDark
+                    ? "border-[#2c4a75] text-[#cbd5e1] hover:bg-[#1a335a]"
+                    : "border-[#d1d5db] text-[#374151] hover:bg-[#f3f4f6]"
+                }`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 <span>O&apos;chirish</span>
@@ -391,7 +471,11 @@ export function ReadingHighlightPane({
               <button
                 type="button"
                 onClick={saveNote}
-                className="cursor-pointer rounded-lg bg-white px-4 py-1.5 text-xs font-bold text-zinc-950 hover:bg-zinc-200"
+                className={`cursor-pointer rounded-lg px-4 py-1.5 text-xs font-bold ${
+                  isDark
+                    ? "bg-white text-[#091529] hover:bg-slate-200"
+                    : "bg-[#111827] text-white hover:bg-[#1f2937]"
+                }`}
               >
                 Saqlash
               </button>

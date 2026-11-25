@@ -2,16 +2,19 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
   CheckCircle2,
-  Headphones,
-  Play,
   Volume2,
   VolumeX,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ListeningPartData } from "@/lib/exam-types";
+import { type ExamTheme, QuestionHighlightArea } from "./question-highlight-area";
 
 interface ListeningStageProps {
+  theme: ExamTheme;
   parts: ListeningPartData[];
   answers: Record<string, string>;
   onChangeAnswer: (qNum: number, value: string) => void;
@@ -20,7 +23,11 @@ interface ListeningStageProps {
   audioCurrentTime: number;
   audioStarted: boolean;
   transferSecondsLeft: number | null;
-  onAudioProgress: (partIndex: number, currentTime: number, started: boolean) => void;
+  onAudioProgress: (
+    partIndex: number,
+    currentTime: number,
+    started: boolean
+  ) => void;
   onStartTransferTimer: () => void;
   onFinishListening: () => void;
 }
@@ -33,6 +40,7 @@ function formatMMSS(sec: number): string {
 }
 
 export function ListeningStage({
+  theme,
   parts,
   answers,
   onChangeAnswer,
@@ -45,12 +53,13 @@ export function ListeningStage({
   onStartTransferTimer,
   onFinishListening,
 }: ListeningStageProps) {
+  const isDark = theme === "dark";
   const [activePartIdx, setActivePartIdx] = useState(
     Math.min(Math.max(0, audioPartIndex), parts.length - 1)
   );
   const [volume, setVolume] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [needsManualResume, setNeedsManualResume] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [audioDuration, setAudioDuration] = useState(0);
   const [displayTime, setDisplayTime] = useState(audioCurrentTime);
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
@@ -58,15 +67,11 @@ export function ListeningStage({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentPartIdxRef = useRef(audioPartIndex);
   const expectedTimeRef = useRef(audioCurrentTime);
-  const audioStartedRef = useRef(audioStarted);
+  const initTriggeredRef = useRef(false);
 
   useEffect(() => {
     currentPartIdxRef.current = audioPartIndex;
   }, [audioPartIndex]);
-
-  useEffect(() => {
-    audioStartedRef.current = audioStarted;
-  }, [audioStarted]);
 
   const stopAudioImmediately = useCallback(() => {
     const el = audioRef.current;
@@ -79,26 +84,17 @@ export function ListeningStage({
     setIsPlaying(false);
   }, []);
 
-  // Ensure audio stops if component unmounts
   useEffect(() => {
     return () => {
       stopAudioImmediately();
     };
   }, [stopAudioImmediately]);
 
-  // Apply volume cleanly
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = volume;
     }
   }, [volume]);
-
-  // If page refreshed mid-audio (audioStarted === true), prepare resume at exact timestamp
-  useEffect(() => {
-    if (audioStarted && !isPlaying && transferSecondsLeft === null) {
-      setNeedsManualResume(true);
-    }
-  }, [audioStarted, isPlaying, transferSecondsLeft]);
 
   const playPartAt = useCallback(
     async (partIdx: number, startSec: number) => {
@@ -118,9 +114,7 @@ export function ListeningStage({
 
       const seekAndPlay = async () => {
         try {
-          if (startSec > 0.5 && Number.isFinite(el.duration) && startSec < el.duration) {
-            el.currentTime = startSec;
-          } else if (startSec > 0.5) {
+          if (startSec > 0.5) {
             el.currentTime = startSec;
           }
         } catch {}
@@ -128,11 +122,11 @@ export function ListeningStage({
         try {
           await el.play();
           setIsPlaying(true);
-          setNeedsManualResume(false);
+          setAutoplayBlocked(false);
           onAudioProgress(partIdx, startSec, true);
         } catch {
           setIsPlaying(false);
-          setNeedsManualResume(true);
+          setAutoplayBlocked(true);
           onAudioProgress(partIdx, startSec, true);
         }
       };
@@ -150,17 +144,32 @@ export function ListeningStage({
     [parts, volume, onAudioProgress]
   );
 
-  const handleStartOrResumeAudio = () => {
-    if (transferSecondsLeft !== null) return;
+  // AUTO-START Listening audio immediately when entering Stage 1 (no "Start Listening" button!)
+  useEffect(() => {
+    if (transferSecondsLeft !== null || initTriggeredRef.current) return;
+    initTriggeredRef.current = true;
     void playPartAt(audioPartIndex, audioCurrentTime);
-  };
+  }, [audioPartIndex, audioCurrentTime, transferSecondsLeft, playPartAt]);
+
+  // If browser blocked unmuted autoplay on Proctor auto-start or F5 refresh, unlock on first click/key anywhere
+  useEffect(() => {
+    if (!autoplayBlocked || transferSecondsLeft !== null) return;
+    const unlock = () => {
+      void playPartAt(currentPartIdxRef.current, expectedTimeRef.current);
+    };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [autoplayBlocked, transferSecondsLeft, playPartAt]);
 
   const handleTimeUpdate = () => {
     const el = audioRef.current;
-    if (!el || !audioStartedRef.current) return;
+    if (!el || !isPlaying) return;
     const t = el.currentTime;
-    // Anti-seek protection: disallow seeking backwards or jumping ahead manually
-    if (Math.abs(t - expectedTimeRef.current) > 2.5 && isPlaying) {
+    if (Math.abs(t - expectedTimeRef.current) > 2.5) {
       el.currentTime = expectedTimeRef.current;
       return;
     }
@@ -174,7 +183,6 @@ export function ListeningStage({
 
   const handlePauseGuard = () => {
     const el = audioRef.current;
-    // Block pausing while audio is actively running (unless ended or submitted)
     if (el && isPlaying && !el.ended && transferSecondsLeft === null) {
       void el.play().catch(() => {});
     }
@@ -188,6 +196,7 @@ export function ListeningStage({
       void playPartAt(nextIdx, 0);
     } else {
       setIsPlaying(false);
+      // Automatically grant 2:00 minutes to review answers after Part 4 ends
       onStartTransferTimer();
     }
   };
@@ -201,18 +210,22 @@ export function ListeningStage({
   const currentPart = parts[activePartIdx] || parts[0];
   const nextPreloadPart = parts[audioPartIndex + 1];
 
-  const answeredCount = Array.from({ length: 40 }, (_, i) => i + 1).filter(
-    (n) => Boolean((answers[String(n)] || "").trim())
-  ).length;
-
-  // Helper for Choose TWO Letters (atomic functional update in parent state)
-  const toggleMultiTwo = (qPair: [number, number], letter: string) => {
-    onToggleMultiTwo(qPair[0], qPair[1], letter);
+  const countInRange = (start: number, end: number) => {
+    let c = 0;
+    for (let q = start; q <= end; q++) {
+      if ((answers[String(q)] || "").trim()) c++;
+    }
+    return c;
   };
+  const answeredCount = countInRange(1, 40);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#09090b] text-zinc-100">
-      {/* Hidden Primary Audio Element (NO autoplay, preload=auto) */}
+    <div
+      className={`flex min-h-0 flex-1 flex-col ${
+        isDark ? "bg-[#0b192f] text-[#f1f5f9]" : "bg-white text-[#111827]"
+      }`}
+    >
+      {/* Hidden Continuous 4-Part Audio Element */}
       <audio
         ref={audioRef}
         preload="auto"
@@ -224,67 +237,77 @@ export function ListeningStage({
           if (Number.isFinite(dur)) setAudioDuration(dur);
         }}
       />
-      {/* Preload next audio part seamlessly once playback has begun */}
       {isPlaying && nextPreloadPart && (
         <audio src={nextPreloadPart.audioUrl} preload="auto" className="hidden" />
       )}
 
-      {/* Listening Audio Control Strip (No seek/pause — Volume only!) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#111113] px-5 py-2.5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md border border-zinc-700 bg-zinc-900 text-zinc-200">
-            <Headphones className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold tracking-wide text-white uppercase">
-                Listening — Part {audioPartIndex + 1} / {parts.length}
-              </span>
-              {isPlaying && (
-                <span className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-[10px] font-semibold text-zinc-200">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-                  LIVE AUDIO
-                </span>
-              )}
-              {transferSecondsLeft !== null && (
-                <span className="rounded border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 font-mono text-[11px] font-bold text-amber-200">
-                  Tekshirish vaqti: {formatMMSS(transferSecondsLeft)}
-                </span>
-              )}
-            </div>
-            <p className="font-mono text-[11px] text-zinc-400">
-              {!audioStarted
-                ? "Audio boshlanmagan — tayyor bo'lganda 'Start Listening' tugmasini bosing"
-                : transferSecondsLeft !== null
-                  ? "Barcha 4 ta audio qism tugadi. Javoblaringizni tekshiring."
-                  : `${parts[audioPartIndex]?.subtitle || ""} · ${formatMMSS(displayTime)} / ${formatMMSS(audioDuration)} (Pauza va orqaga qaytarish bloklangan)`}
-            </p>
-          </div>
+      {/* Official CDI Part Sub-Banner (Matches Screenshot 3 & 4) */}
+      <div
+        className={`flex flex-wrap items-center justify-between gap-3 border-b px-6 py-2.5 ${
+          isDark
+            ? "border-[#1e3a63] bg-[#102340] text-[#f1f5f9]"
+            : "border-[#e5e7eb] bg-[#f3f4f6] text-[#111827]"
+        }`}
+      >
+        <div>
+          <p className="text-sm font-bold">Part {currentPart.part}</p>
+          <p
+            className={`text-xs ${
+              isDark ? "text-[#94a3b8]" : "text-[#4b5563]"
+            }`}
+          >
+            Listen and answer questions {currentPart.questionRange[0]}–
+            {currentPart.questionRange[1]}.
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Start / Resume Audio Button (shown ONLY before start or after F5 reload) */}
-          {(!audioStarted || needsManualResume) && transferSecondsLeft === null && (
-            <button
-              type="button"
-              data-testid="start-listening-audio-btn"
-              onClick={handleStartOrResumeAudio}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-white px-4 py-1.5 text-xs font-bold text-zinc-950 transition hover:bg-zinc-200"
+        {/* Live Audio Status + Volume ONLY (NO Start Listening button, NO pause/seek!) */}
+        <div className="flex flex-wrap items-center gap-3">
+          {transferSecondsLeft !== null ? (
+            <span
+              data-testid="listening-transfer-banner"
+              className={`rounded-md border px-3 py-1 font-mono text-xs font-bold ${
+                isDark
+                  ? "border-amber-500/50 bg-amber-950/50 text-amber-200"
+                  : "border-amber-400 bg-amber-50 text-amber-900"
+              }`}
             >
-              <Play className="h-3.5 w-3.5 fill-current" />
+              Audio tugadi · Tekshirish vaqti: {formatMMSS(transferSecondsLeft)}
+            </span>
+          ) : (
+            <div
+              data-testid="listening-audio-status"
+              className={`flex items-center gap-2 rounded-md border px-3 py-1 font-mono text-[11px] ${
+                isDark
+                  ? "border-[#284773] bg-[#091529] text-[#cbd5e1]"
+                  : "border-[#d1d5db] bg-white text-[#374151]"
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isPlaying ? "animate-pulse bg-red-500" : "bg-amber-500"
+                }`}
+              />
               <span>
-                {audioStarted ? "Audioni davom ettirish" : "Start Listening"}
+                Part {audioPartIndex + 1}/4 · {formatMMSS(displayTime)} /{" "}
+                {formatMMSS(audioDuration)}
               </span>
-            </button>
+            </div>
           )}
 
-          {/* Volume Control ONLY */}
-          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-[#18181b] px-3 py-1.5">
+          {/* Volume Control */}
+          <div
+            className={`flex items-center gap-2 rounded-md border px-2.5 py-1 ${
+              isDark
+                ? "border-[#284773] bg-[#091529]"
+                : "border-[#d1d5db] bg-white"
+            }`}
+          >
             <button
               type="button"
               onClick={() => setVolume((v) => (v > 0 ? 0 : 1))}
               aria-label="Ovoz"
-              className="cursor-pointer text-zinc-300 hover:text-white"
+              className="cursor-pointer opacity-80 hover:opacity-100"
             >
               {volume === 0 ? (
                 <VolumeX className="h-4 w-4" />
@@ -300,105 +323,98 @@ export function ListeningStage({
               value={volume}
               onChange={(e) => setVolume(Number(e.target.value))}
               aria-label="Volume"
-              className="h-1.5 w-24 cursor-pointer accent-white"
+              className="h-1.5 w-20 cursor-pointer accent-[#2563eb]"
             />
-            <span className="w-8 text-right font-mono text-[11px] text-zinc-400">
+            <span className="w-8 text-right font-mono text-[11px] opacity-75">
               {Math.round(volume * 100)}%
             </span>
           </div>
-
-          <button
-            type="button"
-            data-testid="submit-listening-btn"
-            onClick={() => setConfirmSubmitOpen(true)}
-            className="cursor-pointer rounded-md border border-zinc-600 bg-zinc-900 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:border-white hover:bg-zinc-800"
-          >
-            Submit Listening
-          </button>
         </div>
       </div>
 
-      {/* Part Switcher Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800/80 bg-[#0d0d10] px-5 py-2">
-        <div className="flex items-center gap-1.5">
-          {parts.map((p, idx) => (
-            <button
-              key={p.part}
-              type="button"
-              data-testid={`listening-part-tab-${p.part}`}
-              onClick={() => setActivePartIdx(idx)}
-              className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                activePartIdx === idx
-                  ? "border border-zinc-600 bg-zinc-800 text-white"
-                  : "border border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-              }`}
-            >
-              Part {p.part}{" "}
-              <span className="ml-1 font-mono text-[10px] text-zinc-500">
-                ({p.questionRange[0]}–{p.questionRange[1]})
-              </span>
-            </button>
-          ))}
+      {/* Tiny Autoplay Unlock Notice ONLY if browser blocked silent unmuted autoplay */}
+      {autoplayBlocked && transferSecondsLeft === null && (
+        <div
+          onClick={() =>
+            void playPartAt(currentPartIdxRef.current, expectedTimeRef.current)
+          }
+          className={`cursor-pointer border-b px-6 py-2 text-center text-xs font-semibold ${
+            isDark
+              ? "border-amber-500/40 bg-amber-950/60 text-amber-200"
+              : "border-amber-300 bg-amber-50 text-amber-900"
+          }`}
+        >
+          Brauzer ovozni avtomatik yoqishni kutmoqda — Listening audioni
+          boshlash uchun istalgan joyni bosing.
         </div>
-        <span className="font-mono text-xs text-zinc-400">
-          Javob berilgan: <strong className="text-white">{answeredCount}</strong> / 40
-        </span>
-      </div>
+      )}
 
-      {/* Main Listening Questions Canvas */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
-        <div className="mx-auto max-w-4xl space-y-6 pb-8">
-          <div className="border-b border-zinc-800 pb-3">
-            <p className="font-mono text-[11px] font-semibold tracking-widest text-zinc-500 uppercase">
-              {currentPart.title} · Questions {currentPart.questionRange[0]}–
-              {currentPart.questionRange[1]}
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-white">
-              {currentPart.subtitle}
-            </h2>
-          </div>
-
+      {/* Main Listening Questions Canvas (Highlight enabled!) */}
+      <QuestionHighlightArea
+        theme={theme}
+        className="min-h-0 flex-1 overflow-y-auto px-6 py-6"
+      >
+        <div className="mx-auto max-w-4xl space-y-6 pb-12">
           {currentPart.sections.map((sec, sIdx) => {
             if (sec.kind === "note_box") {
               return (
-                <div
-                  key={sIdx}
-                  className="rounded-lg border border-zinc-800 bg-[#111113] p-5"
-                >
-                  <p className="text-xs font-semibold text-zinc-400">
-                    Questions {sec.questionRange[0]}–{sec.questionRange[1]}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-200">{sec.instruction}</p>
+                <div key={sIdx} className="space-y-3">
+                  <div>
+                    <p className="text-sm font-bold">
+                      Questions {sec.questionRange[0]}–{sec.questionRange[1]}
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm ${
+                        isDark ? "text-[#cbd5e1]" : "text-[#374151]"
+                      }`}
+                    >
+                      {sec.instruction}
+                    </p>
+                  </div>
 
-                  <div className="mt-4 rounded-lg border border-zinc-700/80 bg-[#18181b] p-5">
-                    <h3 className="mb-4 text-center text-base font-bold text-white">
+                  <div
+                    className={`rounded border p-6 ${
+                      isDark
+                        ? "border-[#284773] bg-[#0e203b]"
+                        : "border-[#d1d5db] bg-white"
+                    }`}
+                  >
+                    <h3 className="mb-5 text-center text-base font-bold">
                       {sec.boxTitle}
                     </h3>
                     <div className="space-y-4">
                       {sec.groups.map((grp, gIdx) => (
                         <div key={gIdx} className="space-y-2.5">
                           {grp.heading && (
-                            <h4 className="text-sm font-bold text-white">
-                              {grp.heading}
-                            </h4>
+                            <h4 className="text-sm font-bold">{grp.heading}</h4>
                           )}
                           {grp.lines.map((line, lIdx) => (
                             <div
                               key={lIdx}
-                              className="flex flex-wrap items-center gap-2 text-sm leading-7 text-zinc-200"
+                              className="flex flex-wrap items-center gap-2 text-[15px] leading-7"
                             >
                               {line.bullet && (
-                                <span className="mr-1 text-zinc-500">•</span>
+                                <span className="mr-1 opacity-60">•</span>
                               )}
                               {line.label && (
-                                <span className="w-44 shrink-0 font-medium text-zinc-400">
+                                <span
+                                  className={`w-44 shrink-0 font-medium ${
+                                    isDark ? "text-[#cbd5e1]" : "text-[#374151]"
+                                  }`}
+                                >
                                   {line.label}
                                 </span>
                               )}
                               {line.prefix && <span>{line.prefix}</span>}
                               {line.questionNumber !== undefined && (
                                 <span className="inline-flex items-center gap-1.5">
-                                  <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-zinc-800 px-1.5 font-mono text-[11px] font-bold text-white">
+                                  <span
+                                    className={`inline-flex h-6 min-w-[24px] items-center justify-center rounded border px-1.5 font-mono text-xs font-bold ${
+                                      isDark
+                                        ? "border-[#476899] bg-[#091529] text-white"
+                                        : "border-[#9ca3af] bg-white text-[#111827]"
+                                    }`}
+                                  >
                                     {line.questionNumber}
                                   </span>
                                   <input
@@ -413,8 +429,12 @@ export function ListeningStage({
                                         e.target.value
                                       )
                                     }
-                                    placeholder={`Q${line.questionNumber}`}
-                                    className="w-44 rounded border border-zinc-700 bg-[#09090b] px-2.5 py-1 text-sm font-medium text-white placeholder:text-zinc-600 focus:border-white focus:outline-none"
+                                    placeholder={String(line.questionNumber)}
+                                    className={`w-44 rounded border px-2.5 py-1 text-sm font-medium focus:outline-none ${
+                                      isDark
+                                        ? "border-[#2c4a75] bg-[#060f1e] text-white placeholder:text-[#475569] focus:border-[#60a5fa]"
+                                        : "border-[#9ca3af] bg-white text-[#111827] placeholder:text-[#9ca3af] focus:border-[#2563eb]"
+                                    }`}
                                   />
                                 </span>
                               )}
@@ -431,40 +451,81 @@ export function ListeningStage({
 
             if (sec.kind === "table") {
               return (
-                <div
-                  key={sIdx}
-                  className="rounded-lg border border-zinc-800 bg-[#111113] p-5"
-                >
-                  <p className="text-xs font-semibold text-zinc-400">
-                    Questions {sec.questionRange[0]}–{sec.questionRange[1]}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-200">{sec.instruction}</p>
+                <div key={sIdx} className="space-y-3">
+                  <div>
+                    <p className="text-sm font-bold">
+                      Questions {sec.questionRange[0]}–{sec.questionRange[1]}
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm ${
+                        isDark ? "text-[#cbd5e1]" : "text-[#374151]"
+                      }`}
+                    >
+                      {sec.instruction}
+                    </p>
+                  </div>
 
-                  <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-800">
+                  <div
+                    className={`overflow-x-auto rounded border ${
+                      isDark ? "border-[#284773]" : "border-[#d1d5db]"
+                    }`}
+                  >
                     <table className="w-full border-collapse text-left text-sm">
                       <thead>
-                        <tr className="border-b border-zinc-800 bg-[#18181b] text-xs font-bold tracking-wider text-zinc-300 uppercase">
+                        <tr
+                          className={`border-b text-xs font-bold ${
+                            isDark
+                              ? "border-[#284773] bg-[#102340] text-white"
+                              : "border-[#d1d5db] bg-[#f3f4f6] text-[#111827]"
+                          }`}
+                        >
                           {sec.headers.map((h, i) => (
-                            <th key={i} className="px-4 py-3">
+                            <th
+                              key={i}
+                              className={`px-4 py-3 ${
+                                i > 0
+                                  ? isDark
+                                    ? "border-l border-[#284773]"
+                                    : "border-l border-[#d1d5db]"
+                                  : ""
+                              }`}
+                            >
                               {h}
                             </th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-zinc-800 bg-[#0f0f12]">
+                      <tbody
+                        className={`divide-y ${
+                          isDark
+                            ? "divide-[#1e3a63] bg-[#0e203b]"
+                            : "divide-[#e5e7eb] bg-white"
+                        }`}
+                      >
                         {sec.rows.map((row, rIdx) => (
                           <tr key={rIdx}>
-                            <td className="px-4 py-3 font-medium text-zinc-300">
+                            <td className="px-4 py-3 font-semibold">
                               {row.category}
                             </td>
-                            <td className="px-4 py-3 text-zinc-200">
+                            <td
+                              className={`border-l px-4 py-3 ${
+                                isDark ? "border-[#1e3a63]" : "border-[#e5e7eb]"
+                              }`}
+                            >
                               <div className="flex flex-wrap items-center gap-1.5">
                                 {row.recommendation.prefix && (
                                   <span>{row.recommendation.prefix}</span>
                                 )}
-                                {row.recommendation.questionNumber !== undefined && (
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-zinc-800 px-1.5 font-mono text-[11px] font-bold text-white">
+                                {row.recommendation.questionNumber !==
+                                  undefined && (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex h-6 min-w-[24px] items-center justify-center rounded border px-1.5 font-mono text-xs font-bold ${
+                                        isDark
+                                          ? "border-[#476899] bg-[#091529] text-white"
+                                          : "border-[#9ca3af] bg-white text-[#111827]"
+                                      }`}
+                                    >
                                       {row.recommendation.questionNumber}
                                     </span>
                                     <input
@@ -474,7 +535,9 @@ export function ListeningStage({
                                       spellCheck={false}
                                       value={
                                         answers[
-                                          String(row.recommendation.questionNumber)
+                                          String(
+                                            row.recommendation.questionNumber
+                                          )
                                         ] || ""
                                       }
                                       onChange={(e) =>
@@ -483,8 +546,14 @@ export function ListeningStage({
                                           e.target.value
                                         )
                                       }
-                                      placeholder={`Q${row.recommendation.questionNumber}`}
-                                      className="w-36 rounded border border-zinc-700 bg-[#09090b] px-2.5 py-1 text-sm text-white placeholder:text-zinc-600 focus:border-white focus:outline-none"
+                                      placeholder={String(
+                                        row.recommendation.questionNumber
+                                      )}
+                                      className={`w-36 rounded border px-2 py-1 text-sm focus:outline-none ${
+                                        isDark
+                                          ? "border-[#2c4a75] bg-[#060f1e] text-white focus:border-[#60a5fa]"
+                                          : "border-[#9ca3af] bg-white text-[#111827] focus:border-[#2563eb]"
+                                      }`}
                                     />
                                   </span>
                                 )}
@@ -493,14 +562,25 @@ export function ListeningStage({
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-zinc-200">
+                            <td
+                              className={`border-l px-4 py-3 ${
+                                isDark ? "border-[#1e3a63]" : "border-[#e5e7eb]"
+                              }`}
+                            >
                               <div className="flex flex-wrap items-center gap-1.5">
                                 {row.preference.prefix && (
                                   <span>{row.preference.prefix}</span>
                                 )}
-                                {row.preference.questionNumber !== undefined && (
-                                  <span className="inline-flex items-center gap-1">
-                                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded bg-zinc-800 px-1.5 font-mono text-[11px] font-bold text-white">
+                                {row.preference.questionNumber !==
+                                  undefined && (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex h-6 min-w-[24px] items-center justify-center rounded border px-1.5 font-mono text-xs font-bold ${
+                                        isDark
+                                          ? "border-[#476899] bg-[#091529] text-white"
+                                          : "border-[#9ca3af] bg-white text-[#111827]"
+                                      }`}
+                                    >
                                       {row.preference.questionNumber}
                                     </span>
                                     <input
@@ -519,8 +599,14 @@ export function ListeningStage({
                                           e.target.value
                                         )
                                       }
-                                      placeholder={`Q${row.preference.questionNumber}`}
-                                      className="w-36 rounded border border-zinc-700 bg-[#09090b] px-2.5 py-1 text-sm text-white placeholder:text-zinc-600 focus:border-white focus:outline-none"
+                                      placeholder={String(
+                                        row.preference.questionNumber
+                                      )}
+                                      className={`w-36 rounded border px-2 py-1 text-sm focus:outline-none ${
+                                        isDark
+                                          ? "border-[#2c4a75] bg-[#060f1e] text-white focus:border-[#60a5fa]"
+                                          : "border-[#9ca3af] bg-white text-[#111827] focus:border-[#2563eb]"
+                                      }`}
                                     />
                                   </span>
                                 )}
@@ -540,56 +626,79 @@ export function ListeningStage({
 
             if (sec.kind === "mcq") {
               return (
-                <div
-                  key={sIdx}
-                  className="rounded-lg border border-zinc-800 bg-[#111113] p-5"
-                >
-                  <p className="text-xs font-semibold text-zinc-400">
-                    Questions {sec.questionRange[0]}–{sec.questionRange[1]}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-200">{sec.instruction}</p>
-                  <div className="mt-4 space-y-4">
+                <div key={sIdx} className="space-y-4">
+                  <div>
+                    <p className="text-sm font-bold">
+                      Questions {sec.questionRange[0]}–{sec.questionRange[1]}
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm ${
+                        isDark ? "text-[#cbd5e1]" : "text-[#374151]"
+                      }`}
+                    >
+                      {sec.instruction}
+                    </p>
+                    {sec.title && (
+                      <h3 className="mt-3 text-base font-bold">{sec.title}</h3>
+                    )}
+                  </div>
+
+                  <div className="space-y-5">
                     {sec.items.map((item) => {
                       const val = (answers[String(item.number)] || "").toUpperCase();
                       return (
-                        <div
-                          key={item.number}
-                          className="rounded-lg border border-zinc-800 bg-[#18181b] p-4"
-                        >
-                          <p className="text-sm font-semibold text-white">
-                            <span className="mr-2 inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-zinc-800 px-1.5 font-mono text-xs text-zinc-200">
+                        <div key={item.number} className="space-y-2">
+                          <div className="flex items-start gap-2.5 text-[15px]">
+                            <span
+                              className={`mt-0.5 inline-flex h-6 min-w-[26px] shrink-0 items-center justify-center rounded border px-1.5 font-mono text-xs font-bold ${
+                                isDark
+                                  ? "border-[#476899] bg-[#091529] text-white"
+                                  : "border-[#9ca3af] bg-white text-[#111827]"
+                              }`}
+                            >
                               {item.number}
                             </span>
-                            {item.prompt}
-                          </p>
-                          <div className="mt-3 space-y-2">
+                            <p className="font-medium leading-6">{item.prompt}</p>
+                          </div>
+
+                          <div className="space-y-1.5 pl-9">
                             {item.options.map((opt) => {
                               const active = val === opt.key;
                               return (
-                                <button
+                                <label
                                   key={opt.key}
-                                  type="button"
                                   data-testid={`exam-l-q-${item.number}-${opt.key}`}
                                   onClick={() =>
                                     onChangeAnswer(item.number, opt.key)
                                   }
-                                  className={`flex w-full cursor-pointer items-center gap-3 rounded-md border px-3.5 py-2.5 text-left text-sm transition ${
+                                  className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-1.5 text-sm transition ${
                                     active
-                                      ? "border-white bg-zinc-800 font-semibold text-white"
-                                      : "border-zinc-800 bg-[#111113] text-zinc-300 hover:border-zinc-600"
+                                      ? isDark
+                                        ? "bg-[#152d52] font-semibold text-white"
+                                        : "bg-[#eff6ff] font-semibold text-[#111827]"
+                                      : isDark
+                                        ? "text-[#cbd5e1] hover:bg-[#102340]"
+                                        : "text-[#374151] hover:bg-[#f9fafb]"
                                   }`}
                                 >
                                   <span
-                                    className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded font-mono text-xs font-bold ${
+                                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
                                       active
-                                        ? "bg-white text-zinc-950"
-                                        : "border border-zinc-700 text-zinc-400"
+                                        ? "border-[#2563eb] bg-[#2563eb]"
+                                        : isDark
+                                          ? "border-[#476899]"
+                                          : "border-[#9ca3af]"
                                     }`}
                                   >
+                                    {active && (
+                                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                                    )}
+                                  </span>
+                                  <span className="font-mono text-xs font-bold">
                                     {opt.key}
                                   </span>
                                   <span>{opt.text}</span>
-                                </button>
+                                </label>
                               );
                             })}
                           </div>
@@ -608,22 +717,30 @@ export function ListeningStage({
                 (answers[String(q2)] || "").toUpperCase(),
               ].filter(Boolean);
               return (
-                <div
-                  key={sIdx}
-                  className="rounded-lg border border-zinc-800 bg-[#111113] p-5"
-                >
-                  <p className="text-xs font-semibold text-zinc-400">
-                    Questions {q1} and {q2}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-200">{sec.instruction}</p>
-                  <p className="mt-3 text-sm font-semibold text-white">
-                    {sec.prompt}
-                  </p>
-                  <p className="mt-1 font-mono text-xs text-zinc-400">
-                    Tanlangan: {selected.length} / 2{" "}
-                    {selected.length > 0 ? `(${selected.join(", ")})` : ""}
-                  </p>
-                  <div className="mt-3 space-y-2">
+                <div key={sIdx} className="space-y-3 pt-2">
+                  <div>
+                    <p className="text-sm font-bold">
+                      Questions {q1} and {q2}
+                    </p>
+                    <p
+                      className={`mt-0.5 text-sm ${
+                        isDark ? "text-[#cbd5e1]" : "text-[#374151]"
+                      }`}
+                    >
+                      {sec.instruction}
+                    </p>
+                    <p className="mt-2 text-[15px] font-semibold">{sec.prompt}</p>
+                    <p
+                      className={`mt-0.5 font-mono text-xs ${
+                        isDark ? "text-[#94a3b8]" : "text-[#6b7280]"
+                      }`}
+                    >
+                      Tanlangan: {selected.length} / 2{" "}
+                      {selected.length > 0 ? `(${selected.join(", ")})` : ""}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 pl-2">
                     {sec.options.map((opt) => {
                       const checked = selected.includes(opt.key);
                       return (
@@ -632,21 +749,30 @@ export function ListeningStage({
                           type="button"
                           data-testid={`exam-l-q-${q1}-${q2}-${opt.key}`}
                           onClick={() =>
-                            toggleMultiTwo(sec.questionNumbers, opt.key)
+                            onToggleMultiTwo(q1, q2, opt.key)
                           }
-                          className={`flex w-full cursor-pointer items-center gap-3 rounded-md border px-3.5 py-2.5 text-left text-sm transition ${
+                          className={`flex w-full cursor-pointer items-center gap-3 rounded-md border px-3.5 py-2 text-left text-sm transition ${
                             checked
-                              ? "border-white bg-zinc-800 font-semibold text-white"
-                              : "border-zinc-800 bg-[#18181b] text-zinc-300 hover:border-zinc-600"
+                              ? isDark
+                                ? "border-[#60a5fa] bg-[#152d52] font-semibold text-white"
+                                : "border-[#2563eb] bg-[#eff6ff] font-semibold text-[#111827]"
+                              : isDark
+                                ? "border-[#1f3a63] bg-[#0e203b] text-[#cbd5e1] hover:border-[#3a5c8d]"
+                                : "border-[#e5e7eb] bg-white text-[#374151] hover:bg-[#f9fafb]"
                           }`}
                         >
                           <span
-                            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded font-mono text-xs font-bold ${
+                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                               checked
-                                ? "bg-white text-zinc-950"
-                                : "border border-zinc-700 text-zinc-400"
+                                ? "border-[#2563eb] bg-[#2563eb] text-white"
+                                : isDark
+                                  ? "border-[#476899]"
+                                  : "border-[#9ca3af]"
                             }`}
                           >
+                            {checked && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="font-mono text-xs font-bold">
                             {opt.key}
                           </span>
                           <span>{opt.text}</span>
@@ -660,26 +786,36 @@ export function ListeningStage({
 
             if (sec.kind === "matching") {
               return (
-                <div
-                  key={sIdx}
-                  className="rounded-lg border border-zinc-800 bg-[#111113] p-5"
-                >
-                  <p className="text-xs font-semibold text-zinc-400">
-                    Questions {sec.questionRange[0]}–{sec.questionRange[1]}
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-white">
-                    {sec.prompt}
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-400">{sec.instruction}</p>
+                <div key={sIdx} className="space-y-3 pt-2">
+                  <div>
+                    <p className="text-sm font-bold">
+                      Questions {sec.questionRange[0]}–{sec.questionRange[1]}
+                    </p>
+                    <p className="mt-1 text-sm font-medium">{sec.prompt}</p>
+                    <p
+                      className={`mt-0.5 text-xs ${
+                        isDark ? "text-[#94a3b8]" : "text-[#4b5563]"
+                      }`}
+                    >
+                      {sec.instruction}
+                    </p>
+                  </div>
 
-                  <div className="mt-4 rounded-lg border border-zinc-700 bg-[#18181b] p-4">
-                    <p className="mb-2.5 text-xs font-bold tracking-wider text-zinc-300 uppercase">
+                  {/* Clean Reference Box */}
+                  <div
+                    className={`rounded border p-4 text-sm ${
+                      isDark
+                        ? "border-[#284773] bg-[#0e203b]"
+                        : "border-[#d1d5db] bg-[#f9fafb]"
+                    }`}
+                  >
+                    <p className="mb-2 text-xs font-bold tracking-wider uppercase">
                       {sec.boxTitle}
                     </p>
-                    <div className="space-y-1.5 text-sm text-zinc-200">
+                    <div className="space-y-1">
                       {sec.options.map((opt) => (
                         <div key={opt.key} className="flex gap-2.5">
-                          <span className="w-5 shrink-0 font-mono font-bold text-white">
+                          <span className="w-5 shrink-0 font-mono font-bold">
                             {opt.key}
                           </span>
                           <span>{opt.text}</span>
@@ -688,42 +824,109 @@ export function ListeningStage({
                     </div>
                   </div>
 
-                  <div className="mt-4 space-y-2.5">
-                    {sec.items.map((item) => {
-                      const val = (answers[String(item.number)] || "").toUpperCase();
-                      return (
-                        <div
-                          key={item.number}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-[#18181b] px-4 py-3"
+                  {/* Official CDI Matching Matrix Grid (Matches Screenshot 7!) */}
+                  <div
+                    className={`overflow-x-auto rounded border ${
+                      isDark ? "border-[#284773]" : "border-[#d1d5db]"
+                    }`}
+                  >
+                    <table className="w-full border-collapse text-sm">
+                      <thead>
+                        <tr
+                          className={`border-b ${
+                            isDark
+                              ? "border-[#284773] bg-[#102340] text-white"
+                              : "border-[#d1d5db] bg-[#f3f4f6] text-[#111827]"
+                          }`}
                         >
-                          <div className="flex items-center gap-2.5 text-sm font-semibold text-white">
-                            <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-zinc-800 px-1.5 font-mono text-xs text-zinc-200">
-                              {item.number}
-                            </span>
-                            <span>{item.label}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            {sec.options.map((opt) => (
-                              <button
-                                key={opt.key}
-                                type="button"
-                                data-testid={`exam-l-q-${item.number}-${opt.key}`}
-                                onClick={() =>
-                                  onChangeAnswer(item.number, opt.key)
-                                }
-                                className={`h-8 w-8 cursor-pointer rounded border font-mono text-xs font-bold transition ${
-                                  val === opt.key
-                                    ? "border-white bg-white text-zinc-950"
-                                    : "border-zinc-700 bg-[#09090b] text-zinc-300 hover:border-zinc-500"
-                                }`}
-                              >
-                                {opt.key}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
+                          <th className="px-3.5 py-2.5 text-left font-bold">
+                            Item
+                          </th>
+                          {sec.options.map((opt) => (
+                            <th
+                              key={opt.key}
+                              className={`w-11 border-l py-2.5 text-center font-mono text-xs font-bold ${
+                                isDark ? "border-[#284773]" : "border-[#d1d5db]"
+                              }`}
+                            >
+                              {opt.key}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody
+                        className={`divide-y ${
+                          isDark
+                            ? "divide-[#1e3a63] bg-[#0e203b]"
+                            : "divide-[#e5e7eb] bg-white"
+                        }`}
+                      >
+                        {sec.items.map((item) => {
+                          const val = (
+                            answers[String(item.number)] || ""
+                          ).toUpperCase();
+                          return (
+                            <tr key={item.number}>
+                              <td className="px-3.5 py-2.5">
+                                <span
+                                  className={`mr-2 inline-flex h-6 min-w-[24px] items-center justify-center rounded border px-1.5 font-mono text-xs font-bold ${
+                                    isDark
+                                      ? "border-[#476899] bg-[#091529] text-white"
+                                      : "border-[#9ca3af] bg-white text-[#111827]"
+                                  }`}
+                                >
+                                  {item.number}
+                                </span>
+                                <span className="font-medium">{item.label}</span>
+                              </td>
+                              {sec.options.map((opt) => {
+                                const active = val === opt.key;
+                                return (
+                                  <td
+                                    key={opt.key}
+                                    className={`border-l p-0 text-center ${
+                                      isDark
+                                        ? "border-[#1e3a63]"
+                                        : "border-[#e5e7eb]"
+                                    }`}
+                                  >
+                                    <button
+                                      type="button"
+                                      data-testid={`exam-l-q-${item.number}-${opt.key}`}
+                                      onClick={() =>
+                                        onChangeAnswer(item.number, opt.key)
+                                      }
+                                      aria-label={`Q${item.number} ${opt.key}`}
+                                      className={`flex h-10 w-full cursor-pointer items-center justify-center transition ${
+                                        active
+                                          ? isDark
+                                            ? "bg-[#1d4ed8]/40 text-white"
+                                            : "bg-[#dbeafe] text-[#1d4ed8]"
+                                          : isDark
+                                            ? "hover:bg-[#152d52]"
+                                            : "hover:bg-[#f3f4f6]"
+                                      }`}
+                                    >
+                                      {active ? (
+                                        <Check className="h-4 w-4 stroke-[2.5]" />
+                                      ) : (
+                                        <span
+                                          className={`h-3.5 w-3.5 rounded-full border ${
+                                            isDark
+                                              ? "border-[#3a5c8d]"
+                                              : "border-[#d1d5db]"
+                                          }`}
+                                        />
+                                      )}
+                                    </button>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               );
@@ -732,58 +935,159 @@ export function ListeningStage({
             return null;
           })}
         </div>
-      </div>
+      </QuestionHighlightArea>
 
-      {/* Bottom 1–40 Question Palette */}
-      <div className="border-t border-zinc-800 bg-[#111113] px-4 py-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1">
-            {Array.from({ length: 40 }, (_, i) => i + 1).map((qNum) => {
-              const partIdx = Math.floor((qNum - 1) / 10);
-              const isAnswered = Boolean((answers[String(qNum)] || "").trim());
-              const inCurrentPart = partIdx === activePartIdx;
-              return (
+      {/* Official CDI Bottom Navigation Bar (Matches Screenshot 3 & 4!) */}
+      <div
+        className={`relative flex flex-wrap items-center justify-between gap-3 border-t px-4 py-2 ${
+          isDark
+            ? "border-[#1d3456] bg-[#091529] text-white"
+            : "border-[#e5e7eb] bg-white text-[#111827]"
+        }`}
+      >
+        {/* Floating Prev/Next Part Arrows */}
+        <div className="absolute -top-11 right-4 flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={activePartIdx === 0}
+            onClick={() => setActivePartIdx((i) => Math.max(0, i - 1))}
+            aria-label="Oldingi qism"
+            className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded shadow-md transition disabled:opacity-40 ${
+              isDark
+                ? "bg-[#1e3a63] text-white hover:bg-[#2a4d80]"
+                : "bg-[#4b5563] text-white hover:bg-[#374151]"
+            }`}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={activePartIdx >= parts.length - 1}
+            onClick={() =>
+              setActivePartIdx((i) => Math.min(parts.length - 1, i + 1))
+            }
+            aria-label="Keyingi qism"
+            className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded shadow-md transition disabled:opacity-40 ${
+              isDark
+                ? "bg-white text-[#091529] hover:bg-slate-200"
+                : "bg-[#111827] text-white hover:bg-[#1f2937]"
+            }`}
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4">
+          {parts.map((p, idx) => {
+            const isCurrent = idx === activePartIdx;
+            const partCount = countInRange(p.questionRange[0], p.questionRange[1]);
+            const totalInPart = p.questionRange[1] - p.questionRange[0] + 1;
+
+            return (
+              <div key={p.part} className="flex items-center gap-1.5">
                 <button
-                  key={qNum}
                   type="button"
-                  onClick={() => setActivePartIdx(partIdx)}
-                  className={`h-6 w-6 cursor-pointer rounded font-mono text-[10px] font-bold transition ${
-                    isAnswered
-                      ? "bg-white text-zinc-950"
-                      : inCurrentPart
-                        ? "border border-zinc-600 bg-zinc-900 text-zinc-200"
-                        : "border border-zinc-800 bg-[#09090b] text-zinc-500 hover:text-zinc-300"
+                  data-testid={`listening-part-tab-${p.part}`}
+                  onClick={() => setActivePartIdx(idx)}
+                  className={`cursor-pointer text-xs font-bold ${
+                    isCurrent
+                      ? isDark
+                        ? "text-white"
+                        : "text-[#111827]"
+                      : isDark
+                        ? "text-[#94a3b8] hover:text-white"
+                        : "text-[#6b7280] hover:text-[#111827]"
                   }`}
                 >
-                  {qNum}
+                  Part {p.part}
                 </button>
-              );
-            })}
-          </div>
+                {isCurrent ? (
+                  <div className="flex items-center gap-1">
+                    {Array.from(
+                      { length: totalInPart },
+                      (_, k) => p.questionRange[0] + k
+                    ).map((qNum) => {
+                      const answered = Boolean(
+                        (answers[String(qNum)] || "").trim()
+                      );
+                      return (
+                        <span
+                          key={qNum}
+                          className={`inline-flex h-6 min-w-[24px] items-center justify-center rounded border px-1 font-mono text-[11px] font-bold ${
+                            answered
+                              ? "border-[#2563eb] bg-[#2563eb] text-white"
+                              : isDark
+                                ? "border-[#3a5c8d] bg-[#0e203b] text-[#cbd5e1]"
+                                : "border-[#d1d5db] bg-white text-[#374151]"
+                          }`}
+                        >
+                          {qNum}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span
+                    className={`font-mono text-[11px] ${
+                      isDark ? "text-[#64748b]" : "text-[#9ca3af]"
+                    }`}
+                  >
+                    {partCount} of {totalInPart}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
+
+        <button
+          type="button"
+          data-testid="submit-listening-btn"
+          onClick={() => setConfirmSubmitOpen(true)}
+          className={`cursor-pointer rounded-md px-5 py-2 text-xs font-bold transition ${
+            isDark
+              ? "bg-white text-[#091529] hover:bg-slate-200"
+              : "bg-[#111827] text-white hover:bg-[#1f2937]"
+          }`}
+        >
+          Submit Listening
+        </button>
       </div>
 
-      {/* Confirm Submit Listening Modal */}
+      {/* Confirm Submit Modal */}
       {confirmSubmitOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-[#141417] p-6 shadow-2xl">
-            <div className="flex items-center gap-2.5 text-white">
-              <AlertTriangle className="h-5 w-5 text-zinc-300" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+          <div
+            className={`w-full max-w-md rounded-xl border p-6 shadow-2xl ${
+              isDark
+                ? "border-[#284773] bg-[#0e203b] text-white"
+                : "border-[#d1d5db] bg-white text-[#111827]"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
               <h3 className="text-base font-bold">
                 Listening bo&apos;limini yakunlash
               </h3>
             </div>
-            <p className="mt-2.5 text-sm leading-relaxed text-zinc-400">
-              Siz 40 ta savoldan{" "}
-              <strong className="text-white">{answeredCount}</strong> tasiga
-              javob belgiladingiz. Tasdiqlasangiz audio darhol to&apos;xtaydi va
-              Reading (60:00) bo&apos;limiga o&apos;tiladi. Ortga qaytib bo&apos;lmaydi.
+            <p
+              className={`mt-2.5 text-sm leading-relaxed ${
+                isDark ? "text-[#cbd5e1]" : "text-[#4b5563]"
+              }`}
+            >
+              Siz 40 ta savoldan <strong>{answeredCount}</strong> tasiga javob
+              belgiladingiz. Tasdiqlasangiz audio darhol to&apos;xtaydi va
+              Reading (60:00) bo&apos;limiga o&apos;tiladi.
             </p>
             <div className="mt-5 flex items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => setConfirmSubmitOpen(false)}
-                className="cursor-pointer rounded-md border border-zinc-700 px-4 py-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-800"
+                className={`cursor-pointer rounded-md border px-4 py-2 text-xs font-semibold ${
+                  isDark
+                    ? "border-[#2c4a75] text-[#cbd5e1] hover:bg-[#152d52]"
+                    : "border-[#d1d5db] text-[#374151] hover:bg-[#f3f4f6]"
+                }`}
               >
                 Bekor qilish
               </button>
@@ -791,7 +1095,11 @@ export function ListeningStage({
                 type="button"
                 data-testid="confirm-submit-listening-btn"
                 onClick={handleConfirmFinish}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-white px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-zinc-200"
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-4 py-2 text-xs font-bold ${
+                  isDark
+                    ? "bg-white text-[#091529] hover:bg-slate-200"
+                    : "bg-[#111827] text-white hover:bg-[#1f2937]"
+                }`}
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 <span>Ha, Readingga o&apos;tish</span>
