@@ -4,7 +4,11 @@ import {
   saveExamSubmission,
   touchLobbyParticipant,
 } from "@/lib/exam-db";
-import { countWords, gradeExamSection } from "@/lib/exam-grading";
+import {
+  countWords,
+  formatTashkentDateTime,
+  gradeExamSection,
+} from "@/lib/exam-grading";
 import { MOCK_1_ID } from "@/lib/exam-mock1";
 import type { ExamSubmissionRecord } from "@/lib/exam-types";
 
@@ -50,6 +54,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
       mockId?: string;
+      sessionId?: string | null;
+      sessionStartedAt?: string | null;
       participantId?: string;
       fullName?: string;
       listeningAnswers?: Record<string, string>;
@@ -92,22 +98,43 @@ export async function POST(req: NextRequest) {
     );
     const reading = gradeExamSection("reading", mock.readingKey, readingAnswers);
 
+    const submittedAt = new Date().toISOString();
+    const resolvedSessionStartedAt =
+      (body.sessionStartedAt && body.sessionStartedAt.trim()) ||
+      mock.startedAt ||
+      submittedAt;
+    const dt = formatTashkentDateTime(resolvedSessionStartedAt);
+    const resolvedSessionId =
+      (body.sessionId && body.sessionId.trim()) ||
+      mock.currentSessionId ||
+      `${mock.id}__${dt.hourKey}`;
+    const resolvedSessionLabel =
+      (body.sessionId && body.sessionId.trim()) || mock.currentSessionId
+        ? dt.label
+        : `${dt.date} · ${dt.time.slice(0, 2)}:00`;
+
     const record: ExamSubmissionRecord = {
       id: `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
       mockId: mock.id,
       mockTitle: mock.title,
+      sessionId: resolvedSessionId,
+      sessionStartedAt: resolvedSessionStartedAt,
+      sessionLabel: resolvedSessionLabel,
       participantId,
       fullName,
-      submittedAt: new Date().toISOString(),
+      submittedAt,
       tabSwitchCount,
       listening,
       reading,
+      speakingBand: null,
       writingTask1Text,
       writingTask1WordCount: countWords(writingTask1Text),
+      writingTask1Band: null,
       writingTask2Text: writingTask2Text || undefined,
       writingTask2WordCount: writingTask2Text
         ? countWords(writingTask2Text)
         : undefined,
+      writingTask2Band: null,
       writingBand: null,
       teacherFeedback: "",
       gradedBy: null,

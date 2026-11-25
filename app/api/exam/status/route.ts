@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
       startMode: mock.startMode,
       status: mock.status,
       startedAt: mock.startedAt,
+      sessionId: mock.currentSessionId || null,
       waitingCount: participants.filter((p) => p.status !== "submitted").length,
     });
   } catch {

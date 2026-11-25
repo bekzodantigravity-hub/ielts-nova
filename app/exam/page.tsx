@@ -65,6 +65,8 @@ interface PersistedExamState {
   audioStarted: boolean;
   highlights: PassageHighlight[];
   lobbyJoinedAt?: number;
+  sessionId?: string | null;
+  sessionStartedAt?: string | null;
   submissionId?: string;
   submittedAt?: string;
 }
@@ -97,6 +99,8 @@ export default function ClosedCdiExamPage() {
   const [exam, setExam] = useState<MockExamPublicPayload | null>(null);
   const [lobbyWaitingCount, setLobbyWaitingCount] = useState(1);
   const [lobbyJoinedAt, setLobbyJoinedAt] = useState<number>(0);
+  const [examSessionId, setExamSessionId] = useState<string | null>(null);
+  const [examSessionStartedAt, setExamSessionStartedAt] = useState<string | null>(null);
 
   // Answers & progress
   const [listeningAnswers, setListeningAnswers] = useState<Record<string, string>>({});
@@ -177,6 +181,8 @@ export default function ClosedCdiExamPage() {
               ? saved.lobbyJoinedAt
               : Date.now()
           );
+          setExamSessionId(saved.sessionId ?? null);
+          setExamSessionStartedAt(saved.sessionStartedAt ?? null);
           if (saved.submissionId && saved.submittedAt) {
             setSubmissionReceipt({
               id: saved.submissionId,
@@ -222,6 +228,8 @@ export default function ClosedCdiExamPage() {
       audioStarted,
       highlights,
       lobbyJoinedAt,
+      sessionId: examSessionId,
+      sessionStartedAt: examSessionStartedAt,
       submissionId: submissionReceipt?.id,
       submittedAt: submissionReceipt?.submittedAt,
     };
@@ -247,6 +255,8 @@ export default function ClosedCdiExamPage() {
     audioStarted,
     highlights,
     lobbyJoinedAt,
+    examSessionId,
+    examSessionStartedAt,
     submissionReceipt,
   ]);
 
@@ -266,6 +276,7 @@ export default function ClosedCdiExamPage() {
           status?: ExamRoomStatus;
           startMode?: ExamStartMode;
           startedAt?: string | null;
+          sessionId?: string | null;
           waitingCount?: number;
         };
         if (cancelled || !data.ok) return;
@@ -286,6 +297,8 @@ export default function ClosedCdiExamPage() {
         ) {
           const startedMs = new Date(data.startedAt).getTime();
           if (Number.isFinite(startedMs) && startedMs > lobbyJoinedAt) {
+            setExamSessionId(data.sessionId ?? null);
+            setExamSessionStartedAt(data.startedAt);
             setStage("listening");
           }
         }
@@ -313,6 +326,8 @@ export default function ClosedCdiExamPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mockId: exam.id,
+          sessionId: examSessionId,
+          sessionStartedAt: examSessionStartedAt,
           participantId,
           fullName,
           listeningAnswers,
@@ -348,6 +363,8 @@ export default function ClosedCdiExamPage() {
     }
   }, [
     exam,
+    examSessionId,
+    examSessionStartedAt,
     participantId,
     fullName,
     listeningAnswers,
@@ -523,6 +540,8 @@ export default function ClosedCdiExamPage() {
       setLobbyJoinedAt(
         Number.isFinite(joinedTimestamp) ? joinedTimestamp : Date.now()
       );
+      setExamSessionId(null);
+      setExamSessionStartedAt(null);
       setReadingSecondsLeft(data.exam.readingDurationSeconds || 3600);
       setWritingSecondsLeft(data.exam.writingDurationSeconds || 1200);
       setTransferSecondsLeft(null);

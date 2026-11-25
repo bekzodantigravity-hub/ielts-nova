@@ -2,6 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import {
+  compareSubmissionsForRank,
+  computeEffectiveWritingBand,
+  roundIeltsBand,
+} from "./exam-grading";
 import { createDefaultMock1, DEFAULT_EXAM_PASSWORD, MOCK_1_ID } from "./exam-mock1";
 import type {
   ExamRoomStatus,
@@ -60,6 +65,69 @@ function getSupabase() {
 
 function markSupabaseTemporarilyUnavailable() {
   globalThis.__ieltsNovaSupabaseExamUnavailableUntil = Date.now() + 60_000;
+}
+
+const KV_SUBMISSIONS_KEY = "ielts_nova:cdi:submissions:v1";
+
+function getKvConfig(): { url: string; token: string } | null {
+  const url = (
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    ""
+  )
+    .trim()
+    .replace(/\/+$/, "");
+  const token = (
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    ""
+  ).trim();
+  if (!url || !token) return null;
+  return { url, token };
+}
+
+async function kvReadSubmissions(): Promise<Record<string, ExamSubmissionRecord> | null> {
+  const kv = getKvConfig();
+  if (!kv) return null;
+  try {
+    const res = await fetch(`${kv.url}/get/${encodeURIComponent(KV_SUBMISSIONS_KEY)}`, {
+      headers: { Authorization: `Bearer ${kv.token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { result?: string | null };
+    if (!data.result) return {};
+    const parsed = JSON.parse(data.result) as Record<string, ExamSubmissionRecord>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return null;
+  }
+}
+
+async function kvWriteSubmissions(
+  map: Record<string, ExamSubmissionRecord>
+): Promise<boolean> {
+  const kv = getKvConfig();
+  if (!kv) return false;
+  try {
+    const res = await fetch(`${kv.url}/set/${encodeURIComponent(KV_SUBMISSIONS_KEY)}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${kv.token}`,
+        "Content-Type": "text/plain",
+      },
+      body: JSON.stringify(map),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function getExamStorageMode(): "supabase" | "kv" | "local_disk" | "ephemeral_archive" {
+  if (getSupabase()) return "supabase";
+  if (getKvConfig()) return "kv";
+  return process.env.VERCEL ? "ephemeral_archive" : "local_disk";
 }
 
 function createInitialDb(): ExamDatabaseSchema {
@@ -415,57 +483,150 @@ export async function clearLobbyForMock(mockId: string): Promise<void> {
 // SUBMISSIONS & TEACHER GRADING
 // =========================================================================
 
+function pickFresherSubmission(
+  a: ExamSubmissionRecord,
+  b: ExamSubmissionRecord
+): ExamSubmissionRecord {
+  const aTime = a.gradedAt ? new Date(a.gradedAt).getTime() : 0;
+  const bTime = b.gradedAt ? new Date(b.gradedAt).getTime() : 0;
+  if (bTime > aTime) return { ...a, ...b };
+  if (aTime > bTime) return { ...b, ...a };
+  const aGrades =
+    (a.writingBand !== null ? 1 : 0) +
+    (typeof a.speakingBand === "number" ? 1 : 0) +
+    (a.teacherFeedback ? 1 : 0);
+  const bGrades =
+    (b.writingBand !== null ? 1 : 0) +
+    (typeof b.speakingBand === "number" ? 1 : 0) +
+    (b.teacherFeedback ? 1 : 0);
+  return bGrades > aGrades ? { ...a, ...b } : { ...b, ...a };
+}
+
 export async function saveExamSubmission(
   record: ExamSubmissionRecord
 ): Promise<ExamSubmissionRecord> {
   const db = readLocalDb();
-  db.submissions[record.id] = record;
-  if (db.lobby[record.participantId]) {
-    db.lobby[record.participantId].status = "submitted";
-    db.lobby[record.participantId].lastSeenAt = new Date().toISOString();
+  const existing = db.submissions[record.id];
+  const merged = existing ? pickFresherSubmission(existing, record) : record;
+  db.submissions[merged.id] = merged;
+  if (db.lobby[merged.participantId]) {
+    db.lobby[merged.participantId].status = "submitted";
+    db.lobby[merged.participantId].lastSeenAt = new Date().toISOString();
   }
   writeLocalDb(db);
+
+  // Sync to KV if configured
+  const kvMap = await kvReadSubmissions();
+  if (kvMap) {
+    kvMap[merged.id] = merged;
+    await kvWriteSubmissions(kvMap);
+  }
 
   const sb = getSupabase();
   if (sb) {
     try {
       const { error } = await sb.from("cdi_exam_submissions").upsert({
-        id: record.id,
-        mock_id: record.mockId,
-        mock_title: record.mockTitle,
-        participant_id: record.participantId,
-        full_name: record.fullName,
-        submitted_at: record.submittedAt,
-        tab_switch_count: record.tabSwitchCount,
-        listening_band: record.listening.band,
-        listening_raw: record.listening.rawScore,
-        reading_band: record.reading.band,
-        reading_raw: record.reading.rawScore,
-        writing_band: record.writingBand,
-        teacher_feedback: record.teacherFeedback,
-        graded_by: record.gradedBy,
-        graded_at: record.gradedAt,
-        payload_json: record,
+        id: merged.id,
+        mock_id: merged.mockId,
+        mock_title: merged.mockTitle,
+        participant_id: merged.participantId,
+        full_name: merged.fullName,
+        submitted_at: merged.submittedAt,
+        tab_switch_count: merged.tabSwitchCount,
+        listening_band: merged.listening.band,
+        listening_raw: merged.listening.rawScore,
+        reading_band: merged.reading.band,
+        reading_raw: merged.reading.rawScore,
+        writing_band: merged.writingBand,
+        teacher_feedback: merged.teacherFeedback,
+        graded_by: merged.gradedBy,
+        graded_at: merged.gradedAt,
+        payload_json: merged,
       });
       if (error) markSupabaseTemporarilyUnavailable();
     } catch {
       markSupabaseTemporarilyUnavailable();
     }
   }
-  return record;
+  return merged;
 }
 
-function submissionRankScore(s: ExamSubmissionRecord): number {
-  const parts = [s.listening.band, s.reading.band];
-  if (typeof s.writingBand === "number") parts.push(s.writingBand);
-  const avg = parts.reduce((acc, v) => acc + v, 0) / parts.length;
-  return avg * 1000 + (s.listening.rawScore + s.reading.rawScore);
+export async function syncExamSubmissions(
+  records: ExamSubmissionRecord[]
+): Promise<ExamSubmissionRecord[]> {
+  const db = readLocalDb();
+  const kvMap = (await kvReadSubmissions()) || null;
+  let kvDirty = false;
+
+  for (const incoming of records) {
+    if (!incoming || !incoming.id || !incoming.fullName || !incoming.listening || !incoming.reading) {
+      continue;
+    }
+    const existing = db.submissions[incoming.id];
+    const next = existing ? pickFresherSubmission(existing, incoming) : incoming;
+    db.submissions[next.id] = next;
+    if (kvMap) {
+      const kvExisting = kvMap[next.id];
+      kvMap[next.id] = kvExisting ? pickFresherSubmission(kvExisting, next) : next;
+      kvDirty = true;
+    }
+  }
+
+  writeLocalDb(db);
+  if (kvMap && kvDirty) {
+    await kvWriteSubmissions(kvMap);
+  }
+
+  const sb = getSupabase();
+  if (sb && records.length > 0) {
+    try {
+      const rows = records
+        .filter((r) => r && r.id && r.fullName && r.listening && r.reading)
+        .map((r) => ({
+          id: r.id,
+          mock_id: r.mockId,
+          mock_title: r.mockTitle,
+          participant_id: r.participantId,
+          full_name: r.fullName,
+          submitted_at: r.submittedAt,
+          tab_switch_count: r.tabSwitchCount,
+          listening_band: r.listening.band,
+          listening_raw: r.listening.rawScore,
+          reading_band: r.reading.band,
+          reading_raw: r.reading.rawScore,
+          writing_band: r.writingBand,
+          teacher_feedback: r.teacherFeedback,
+          graded_by: r.gradedBy,
+          graded_at: r.gradedAt,
+          payload_json: r,
+        }));
+      if (rows.length > 0) {
+        const { error } = await sb.from("cdi_exam_submissions").upsert(rows);
+        if (error) markSupabaseTemporarilyUnavailable();
+      }
+    } catch {
+      markSupabaseTemporarilyUnavailable();
+    }
+  }
+
+  return Object.values(db.submissions).sort(compareSubmissionsForRank);
 }
 
 export async function listExamSubmissions(
   mockId?: string
 ): Promise<ExamSubmissionRecord[]> {
   const db = readLocalDb();
+
+  // Merge from KV if configured
+  const kvMap = await kvReadSubmissions();
+  if (kvMap) {
+    for (const [id, rec] of Object.entries(kvMap)) {
+      const existing = db.submissions[id];
+      db.submissions[id] = existing ? pickFresherSubmission(existing, rec) : rec;
+    }
+    writeLocalDb(db);
+  }
+
   const sb = getSupabase();
   if (sb) {
     try {
@@ -487,9 +648,14 @@ export async function listExamSubmissions(
             gradedAt: row.graded_at ?? payload.gradedAt ?? null,
           };
         });
-        for (const s of list) db.submissions[s.id] = s;
+        for (const s of list) {
+          const existing = db.submissions[s.id];
+          db.submissions[s.id] = existing ? pickFresherSubmission(existing, s) : s;
+        }
         writeLocalDb(db);
-        return list.sort((a, b) => submissionRankScore(b) - submissionRankScore(a));
+        return Object.values(db.submissions)
+          .filter((s) => (!mockId ? true : s.mockId === mockId))
+          .sort(compareSubmissionsForRank);
       }
       if (error) markSupabaseTemporarilyUnavailable();
     } catch {
@@ -499,23 +665,75 @@ export async function listExamSubmissions(
 
   return Object.values(db.submissions)
     .filter((s) => (!mockId ? true : s.mockId === mockId))
-    .sort((a, b) => submissionRankScore(b) - submissionRankScore(a));
+    .sort(compareSubmissionsForRank);
 }
 
 export async function updateSubmissionWritingGrade(input: {
   id: string;
-  writingBand: number | null;
-  teacherFeedback: string;
+  writingBand?: number | null;
+  writingTask1Band?: number | null;
+  writingTask2Band?: number | null;
+  speakingBand?: number | null;
+  teacherFeedback?: string;
   gradedBy: string;
+  fallbackRecord?: ExamSubmissionRecord;
 }): Promise<ExamSubmissionRecord | null> {
   const db = readLocalDb();
-  const existing = db.submissions[input.id];
+  let existing = db.submissions[input.id];
+  if (!existing) {
+    const kvMap = await kvReadSubmissions();
+    if (kvMap && kvMap[input.id]) {
+      existing = kvMap[input.id];
+    }
+  }
+  if (!existing && input.fallbackRecord && input.fallbackRecord.id === input.id) {
+    existing = input.fallbackRecord;
+  }
   if (!existing) return null;
+
+  const nextT1 =
+    input.writingTask1Band !== undefined
+      ? input.writingTask1Band !== null
+        ? roundIeltsBand(input.writingTask1Band)
+        : null
+      : existing.writingTask1Band ?? null;
+  const nextT2 =
+    input.writingTask2Band !== undefined
+      ? input.writingTask2Band !== null
+        ? roundIeltsBand(input.writingTask2Band)
+        : null
+      : existing.writingTask2Band ?? null;
+
+  const explicitWriting =
+    input.writingBand !== undefined
+      ? input.writingBand !== null
+        ? roundIeltsBand(input.writingBand)
+        : null
+      : existing.writingBand;
+
+  const computedWriting = computeEffectiveWritingBand({
+    writingBand: explicitWriting,
+    writingTask1Band: nextT1,
+    writingTask2Band: nextT2,
+  });
+
+  const nextSpeaking =
+    input.speakingBand !== undefined
+      ? input.speakingBand !== null
+        ? roundIeltsBand(input.speakingBand)
+        : null
+      : existing.speakingBand ?? null;
 
   const updated: ExamSubmissionRecord = {
     ...existing,
-    writingBand: input.writingBand,
-    teacherFeedback: input.teacherFeedback,
+    writingTask1Band: nextT1 ?? (nextT2 === null ? computedWriting : null),
+    writingTask2Band: nextT2,
+    writingBand: computedWriting,
+    speakingBand: nextSpeaking,
+    teacherFeedback:
+      input.teacherFeedback !== undefined
+        ? input.teacherFeedback
+        : existing.teacherFeedback,
     gradedBy: input.gradedBy,
     gradedAt: new Date().toISOString(),
   };
@@ -526,6 +744,11 @@ export async function deleteExamSubmission(id: string): Promise<boolean> {
   const db = readLocalDb();
   delete db.submissions[id];
   writeLocalDb(db);
+  const kvMap = await kvReadSubmissions();
+  if (kvMap && kvMap[id]) {
+    delete kvMap[id];
+    await kvWriteSubmissions(kvMap);
+  }
   const sb = getSupabase();
   if (sb) {
     try {

@@ -1,20 +1,43 @@
 "use client";
 
 import {
+  Building2,
+  CalendarClock,
   Check,
+  Database,
   Download,
+  FileDown,
   FileText,
   RefreshCw,
   Search,
   ShieldAlert,
   Trash2,
   Trophy,
+  Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Task1Chart } from "@/components/exam/task1-chart";
+import {
+  compareSubmissionsForRank,
+  computeOverallBandSummary,
+  formatTashkentDateTime,
+  getSubmissionSessionInfo,
+} from "@/lib/exam-grading";
 import { MOCK_1_WRITING_TASK1 } from "@/lib/exam-mock1";
-import { downloadSubmissionPdfReport } from "@/lib/exam-pdf";
+import {
+  downloadGroupResultsPdfReport,
+  downloadSubmissionPdfReport,
+} from "@/lib/exam-pdf";
+import {
+  getArchivedSubmissions,
+  getSavedCentreName,
+  markSubmissionDeletedLocally,
+  mergeServerAndArchivedSubmissions,
+  saveArchivedSubmissions,
+  saveCentreName,
+  upsertArchivedSubmission,
+} from "@/lib/exam-results-store";
 import type {
   ExamSubmissionRecord,
   SectionGradeReport,
@@ -39,7 +62,19 @@ const BAND_OPTIONS = [
   "4.0",
   "3.5",
   "3.0",
+  "2.5",
+  "2.0",
 ];
+
+interface SessionGroupItem {
+  key: string;
+  label: string;
+  dateLabel: string;
+  timeLabel: string;
+  mockTitle: string;
+  sortTs: number;
+  count: number;
+}
 
 function SectionAnalysisView({ section }: { section: SectionGradeReport }) {
   return (
@@ -169,19 +204,36 @@ function SectionAnalysisView({ section }: { section: SectionGradeReport }) {
 export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
   const [submissions, setSubmissions] = useState<ExamSubmissionRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [storageMode, setStorageMode] = useState<string>("archive");
   const [query, setQuery] = useState("");
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string>("all");
+  const [centreName, setCentreName] = useState<string>("IELTS Nova Learning Centre");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modalTab, setModalTab] = useState<"listening" | "reading" | "writing">(
     "listening"
   );
 
-  // Teacher manual writing grading state
+  // Teacher manual grading state (Writing + Speaking)
   const [writingBandDraft, setWritingBandDraft] = useState<string>("");
+  const [writingT2BandDraft, setWritingT2BandDraft] = useState<string>("");
+  const [speakingBandDraft, setSpeakingBandDraft] = useState<string>("");
   const [feedbackDraft, setFeedbackDraft] = useState<string>("");
   const [savingGrade, setSavingGrade] = useState(false);
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Instant hydration from persistent local archive so reload/redeploy NEVER wipes results
+  useEffect(() => {
+    setCentreName(getSavedCentreName());
+    const cached = getArchivedSubmissions();
+    if (cached.length > 0) {
+      setSubmissions(cached);
+      setLoading(false);
+    }
+  }, []);
 
   const loadResults = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent) setLoading((prev) => prev && getArchivedSubmissions().length === 0);
     try {
       const res = await fetch("/api/admin/exams/results", {
         cache: "no-store",
@@ -191,12 +243,32 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
       const data = (await res.json()) as {
         ok?: boolean;
         submissions?: ExamSubmissionRecord[];
+        storageMode?: string;
       };
+      if (data.storageMode) setStorageMode(data.storageMode);
       if (data.ok && Array.isArray(data.submissions)) {
-        setSubmissions(data.submissions);
+        const { merged, missingOnServer } = mergeServerAndArchivedSubmissions(
+          data.submissions
+        );
+        setSubmissions(merged);
+
+        // Automatically restore archived submissions back to server if serverless cold-start cleared /tmp
+        if (missingOnServer.length > 0) {
+          void fetch("/api/admin/exams/results", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              action: "sync",
+              submissions: missingOnServer,
+            }),
+          }).catch(() => {});
+        }
       }
     } catch {
-      // keep existing
+      // keep existing durable archived results
+      const cached = getArchivedSubmissions();
+      if (cached.length > 0) setSubmissions(cached);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -204,17 +276,95 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
 
   useEffect(() => {
     void loadResults(false);
+    const id = setInterval(() => void loadResults(true), 10000);
+    return () => clearInterval(id);
   }, [loadResults]);
+
+  // Group all saved results by exact date & time session (newest first)
+  const sessions = useMemo<SessionGroupItem[]>(() => {
+    const map = new Map<string, SessionGroupItem>();
+    for (const sub of submissions) {
+      const info = getSubmissionSessionInfo(sub);
+      const existing = map.get(info.sessionKey);
+      if (existing) {
+        existing.count += 1;
+        if (info.sortTs > existing.sortTs) existing.sortTs = info.sortTs;
+      } else {
+        map.set(info.sessionKey, {
+          key: info.sessionKey,
+          label: info.sessionLabel,
+          dateLabel: info.dateLabel,
+          timeLabel: info.timeLabel,
+          mockTitle: info.mockTitle,
+          sortTs: info.sortTs,
+          count: 1,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.sortTs - a.sortTs);
+  }, [submissions]);
+
+  // If the selected session was deleted/emptied, reset to "all"
+  useEffect(() => {
+    if (
+      selectedSessionKey !== "all" &&
+      !sessions.some((s) => s.key === selectedSessionKey)
+    ) {
+      setSelectedSessionKey("all");
+    }
+  }, [sessions, selectedSessionKey]);
+
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.key === selectedSessionKey) || null,
+    [sessions, selectedSessionKey]
+  );
+
+  const sessionSubmissions = useMemo(() => {
+    const base =
+      selectedSessionKey === "all"
+        ? submissions
+        : submissions.filter(
+            (s) => getSubmissionSessionInfo(s).sessionKey === selectedSessionKey
+          );
+    return [...base].sort(compareSubmissionsForRank);
+  }, [submissions, selectedSessionKey]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return submissions;
-    return submissions.filter(
+    if (!q) return sessionSubmissions;
+    return sessionSubmissions.filter(
       (s) =>
         s.fullName.toLowerCase().includes(q) ||
-        s.mockTitle.toLowerCase().includes(q)
+        s.mockTitle.toLowerCase().includes(q) ||
+        formatTashkentDateTime(s.submittedAt).label.toLowerCase().includes(q)
     );
-  }, [submissions, query]);
+  }, [sessionSubmissions, query]);
+
+  // Summary metrics for active session / table
+  const stats = useMemo(() => {
+    if (filtered.length === 0) {
+      return {
+        students: 0,
+        gradedCount: 0,
+        full4Count: 0,
+        avgBand: 0,
+        topBand: 0,
+      };
+    }
+    const summaries = filtered.map((s) => computeOverallBandSummary(s));
+    const full4Count = summaries.filter((s) => s.isFull4Skill).length;
+    const writingCount = summaries.filter((s) => s.writingBand !== null).length;
+    const avgBand =
+      summaries.reduce((acc, s) => acc + s.overall, 0) / filtered.length;
+    const topBand = Math.max(...summaries.map((s) => s.overall));
+    return {
+      students: filtered.length,
+      gradedCount: full4Count > 0 ? full4Count : writingCount,
+      full4Count,
+      avgBand,
+      topBand,
+    };
+  }, [filtered]);
 
   const selected = useMemo(
     () => submissions.find((s) => s.id === selectedId) || null,
@@ -227,25 +377,36 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
   ) => {
     setSelectedId(sub.id);
     setModalTab(initialTab);
+    const t1Val = sub.writingTask1Band ?? sub.writingBand;
     setWritingBandDraft(
-      sub.writingBand !== null ? sub.writingBand.toFixed(1) : ""
+      typeof t1Val === "number" ? t1Val.toFixed(1) : ""
+    );
+    setWritingT2BandDraft(
+      typeof sub.writingTask2Band === "number"
+        ? sub.writingTask2Band.toFixed(1)
+        : ""
+    );
+    setSpeakingBandDraft(
+      typeof sub.speakingBand === "number" ? sub.speakingBand.toFixed(1) : ""
     );
     setFeedbackDraft(sub.teacherFeedback || "");
   };
 
-  const handleSaveWritingGrade = async () => {
-    if (!selected) return;
-    setSavingGrade(true);
+  const handleQuickSpeakingChange = async (
+    sub: ExamSubmissionRecord,
+    rawVal: string
+  ) => {
+    const speakingVal = rawVal.trim() === "" ? null : Number(rawVal);
+    setSavingRowId(sub.id);
     try {
-      const bandVal =
-        writingBandDraft.trim() === "" ? null : Number(writingBandDraft);
       const res = await fetch("/api/admin/exams/results", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({
-          id: selected.id,
-          writingBand: bandVal,
-          teacherFeedback: feedbackDraft.trim(),
+          id: sub.id,
+          speakingBand: speakingVal,
+          fallbackRecord: sub,
         }),
       });
       const data = (await res.json()) as {
@@ -253,11 +414,55 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
         submission?: ExamSubmissionRecord;
         error?: string;
       };
-      if (!res.ok || !data.ok) {
+      if (!res.ok || !data.ok || !data.submission) {
+        throw new Error(data.error || "Speaking ballini saqlab bo'lmadi.");
+      }
+      const next = upsertArchivedSubmission(data.submission);
+      setSubmissions(next);
+      onToast("ok", `${sub.fullName} — Speaking balli saqlandi!`);
+    } catch (err) {
+      onToast("err", err instanceof Error ? err.message : "Xatolik.");
+    } finally {
+      setSavingRowId(null);
+    }
+  };
+
+  const handleSaveTeacherGrades = async () => {
+    if (!selected) return;
+    setSavingGrade(true);
+    try {
+      const t1Val =
+        writingBandDraft.trim() === "" ? null : Number(writingBandDraft);
+      const t2Val =
+        writingT2BandDraft.trim() === "" ? null : Number(writingT2BandDraft);
+      const spVal =
+        speakingBandDraft.trim() === "" ? null : Number(speakingBandDraft);
+
+      const res = await fetch("/api/admin/exams/results", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          id: selected.id,
+          writingBand: t1Val,
+          writingTask1Band: t1Val,
+          writingTask2Band: t2Val,
+          speakingBand: spVal,
+          teacherFeedback: feedbackDraft.trim(),
+          fallbackRecord: selected,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        submission?: ExamSubmissionRecord;
+        error?: string;
+      };
+      if (!res.ok || !data.ok || !data.submission) {
         throw new Error(data.error || "Saqlab bo'lmadi.");
       }
-      onToast("ok", "Writing Task 1 bahosi saqlandi!");
-      await loadResults(true);
+      const next = upsertArchivedSubmission(data.submission);
+      setSubmissions(next);
+      onToast("ok", "Baholar va izoh doimiy saqlandi!");
     } catch (err) {
       onToast("err", err instanceof Error ? err.message : "Xatolik.");
     } finally {
@@ -267,45 +472,172 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
 
   const handleDeleteSubmission = async (id: string) => {
     try {
-      const res = await fetch("/api/admin/exams/results", {
+      markSubmissionDeletedLocally(id);
+      setSubmissions((prev) => prev.filter((s) => s.id !== id));
+      if (selectedId === id) setSelectedId(null);
+
+      await fetch("/api/admin/exams/results", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ id }),
       });
-      if (res.ok) {
-        setSubmissions((prev) => prev.filter((s) => s.id !== id));
-        if (selectedId === id) setSelectedId(null);
-        onToast("ok", "Natija o'chirildi.");
-      }
+      onToast("ok", "Natija o'chirildi.");
     } catch {}
+  };
+
+  const handleDownloadGroupPdf = () => {
+    if (filtered.length === 0) {
+      onToast("err", "Yuklab olish uchun natijalar mavjud emas.");
+      return;
+    }
+    const label = activeSession
+      ? activeSession.label
+      : `Barcha sessiyalar (${filtered.length} ta)`;
+    const title = activeSession
+      ? activeSession.mockTitle
+      : filtered[0]?.mockTitle || "Official CDI IELTS Mock";
+
+    downloadGroupResultsPdfReport(filtered, {
+      centreName,
+      sessionTitle: title,
+      sessionDateTimeLabel: label,
+    });
+    onToast(
+      "ok",
+      `Guruh PDF hisoboti (${filtered.length} nafar o'quvchi) yuklab olindi!`
+    );
+  };
+
+  const handleExportArchiveJson = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      centreName,
+      submissions,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ielts_nova_results_backup_${formatTashkentDateTime(new Date().toISOString()).dayKey}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast("ok", `Zaxira fayl (${submissions.length} ta natija) yuklab olindi.`);
+  };
+
+  const handleImportArchiveJson = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as {
+        submissions?: ExamSubmissionRecord[];
+        centreName?: string;
+      };
+      const imported = Array.isArray(parsed)
+        ? (parsed as ExamSubmissionRecord[])
+        : Array.isArray(parsed?.submissions)
+          ? parsed.submissions
+          : [];
+      if (imported.length === 0) {
+        onToast("err", "Zaxira faylda natijalar topilmadi.");
+        return;
+      }
+      if (parsed?.centreName) {
+        setCentreName(parsed.centreName);
+        saveCentreName(parsed.centreName);
+      }
+      const { merged } = mergeServerAndArchivedSubmissions(imported);
+      saveArchivedSubmissions(merged);
+      setSubmissions(merged);
+      await fetch("/api/admin/exams/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ action: "sync", submissions: merged }),
+      }).catch(() => {});
+      onToast("ok", `${imported.length} ta natija arxivga tiklandi!`);
+    } catch {
+      onToast("err", "JSON zaxira faylni o'qib bo'lmadi.");
+    }
   };
 
   return (
     <div className="space-y-5">
-      {/* Header & Search */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      {/* Header & Group PDF Actions */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-white">
-            Mock Natijalari &amp; Reyting Jadvali
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-bold tracking-tight text-white">
+              Mock Natijalari &amp; Doimiy Arxiv Jadvali
+            </h2>
+            <span
+              data-testid="results-persistence-badge"
+              className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-[#18181b] px-2 py-0.5 font-mono text-[10px] font-semibold text-zinc-300"
+            >
+              <Database className="h-3 w-3 text-zinc-400" />
+              {storageMode === "supabase"
+                ? "Supabase Cloud + Arxiv"
+                : storageMode === "kv"
+                  ? "Cloud KV + Arxiv"
+                  : "Doimiy Arxiv Faol"}
+            </span>
+          </div>
           <p className="mt-1 text-xs text-zinc-400">
-            Eng yuqori balldan 1-o&apos;rindan tartiblangan. Har bir o&apos;quvchi
-            ustiga bosib 1–40 Answer Sheet, xatolar tahlili, Writing baholash va
-            PDF hisobotni oching.
+            Barcha natijalar sana va soat sessiyasi bo&apos;yicha doimiy saqlanadi
+            (sahifa yangilanganda o&apos;chib ketmaydi). Istalgan sessiyaning barcha
+            o&apos;quvchilarini o&apos;rinlari va ballari bilan bitta PDF qilib yuklab
+            oling.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-2.5 left-3 h-3.5 w-3.5 text-zinc-500" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="O'quvchi ismini qidiring..."
-              className="w-56 rounded-lg border border-zinc-800 bg-[#111113] py-2 pr-3 pl-8 text-xs text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
-            />
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="download-group-pdf-btn"
+            disabled={filtered.length === 0}
+            onClick={handleDownloadGroupPdf}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-white px-4 py-2 text-xs font-bold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <FileDown className="h-4 w-4" />
+            <span>
+              Guruh PDF yuklab olish ({filtered.length} ta)
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportArchiveJson}
+            disabled={submissions.length === 0}
+            title="Arxivni JSON backup qilib yuklab olish"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#111113] px-2.5 py-2 text-xs font-semibold text-zinc-300 hover:border-zinc-600 hover:text-white disabled:opacity-40"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Backup</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            title="JSON zaxira fayldan tiklash"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#111113] px-2.5 py-2 text-xs font-semibold text-zinc-300 hover:border-zinc-600 hover:text-white"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            <span>Tiklash</span>
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json"
+            onChange={(e) => void handleImportArchiveJson(e)}
+            className="hidden"
+          />
+
           <button
             type="button"
             onClick={() => void loadResults(false)}
@@ -317,131 +649,299 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
         </div>
       </div>
 
+      {/* Session / Date-Time Grouping Strip + Centre Title Setting */}
+      <div className="rounded-xl border border-zinc-800 bg-[#111113] p-4 space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-zinc-400" />
+            <span className="font-mono text-[11px] font-bold tracking-wider text-zinc-300 uppercase">
+              Imtihon Sessiyalari (Sana va Soat bo&apos;yicha)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex items-center">
+              <Building2 className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-zinc-500" />
+              <input
+                type="text"
+                data-testid="pdf-centre-name-input"
+                value={centreName}
+                onChange={(e) => {
+                  setCentreName(e.target.value);
+                  saveCentreName(e.target.value);
+                }}
+                placeholder="PDF markaz nomi..."
+                title="PDF hisobot sarlavhasidagi o'quv markaz nomi"
+                className="w-56 rounded-lg border border-zinc-800 bg-[#18181b] py-1.5 pr-3 pl-8 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-2 left-2.5 h-3.5 w-3.5 text-zinc-500" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="O'quvchi ismini qidiring..."
+                className="w-48 rounded-lg border border-zinc-800 bg-[#18181b] py-1.5 pr-3 pl-8 text-xs text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Clickable Date & Time Session Chips */}
+        <div
+          data-testid="exam-sessions-strip"
+          className="flex flex-wrap items-center gap-2"
+        >
+          <button
+            type="button"
+            data-testid="session-filter-all"
+            onClick={() => setSelectedSessionKey("all")}
+            className={`cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+              selectedSessionKey === "all"
+                ? "border-white bg-white text-zinc-950"
+                : "border-zinc-800 bg-[#18181b] text-zinc-300 hover:border-zinc-600 hover:text-white"
+            }`}
+          >
+            Barcha natijalar ({submissions.length})
+          </button>
+
+          {sessions.map((sess, sIdx) => (
+            <button
+              key={sess.key}
+              type="button"
+              data-testid={`session-filter-${sIdx}`}
+              onClick={() => setSelectedSessionKey(sess.key)}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                selectedSessionKey === sess.key
+                  ? "border-white bg-white text-zinc-950"
+                  : "border-zinc-800 bg-[#18181b] text-zinc-300 hover:border-zinc-600 hover:text-white"
+              }`}
+            >
+              <span className="font-mono">{sess.label}</span>
+              <span
+                className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                  selectedSessionKey === sess.key
+                    ? "bg-zinc-900 text-white"
+                    : "bg-zinc-800 text-zinc-400"
+                }`}
+              >
+                {sess.count} ta
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* 4 Summary KPI Cards (mirrors the Group PDF report header!) */}
+        <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-4">
+          <div className="rounded-lg border border-zinc-800 bg-[#16161a] px-3.5 py-2.5">
+            <p className="font-mono text-[10px] tracking-wider text-zinc-500 uppercase">
+              O&apos;quvchilar
+            </p>
+            <p
+              data-testid="kpi-total-students"
+              className="mt-1 font-mono text-xl font-bold text-white"
+            >
+              {stats.students}
+            </p>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-[#16161a] px-3.5 py-2.5">
+            <p className="font-mono text-[10px] tracking-wider text-zinc-500 uppercase">
+              {stats.full4Count > 0 ? "To'liq 4-Skill" : "Writing Baholangan"}
+            </p>
+            <p className="mt-1 font-mono text-xl font-bold text-white">
+              {stats.gradedCount}
+            </p>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-[#16161a] px-3.5 py-2.5">
+            <p className="font-mono text-[10px] tracking-wider text-zinc-500 uppercase">
+              O&apos;rtacha Band
+            </p>
+            <p className="mt-1 font-mono text-xl font-bold text-white">
+              {stats.students > 0 ? `~${stats.avgBand.toFixed(1)}` : "—"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-zinc-800 bg-[#16161a] px-3.5 py-2.5">
+            <p className="font-mono text-[10px] tracking-wider text-zinc-500 uppercase">
+              Eng Yuqori Band
+            </p>
+            <p className="mt-1 font-mono text-xl font-bold text-white">
+              {stats.students > 0 ? stats.topBand.toFixed(1) : "—"}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Leaderboard Table */}
       <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111113]">
         <table className="w-full border-collapse text-left text-xs">
           <thead>
             <tr className="border-b border-zinc-800 bg-[#18181b] font-mono text-[11px] tracking-wider text-zinc-400 uppercase">
-              <th className="px-4 py-3">O&apos;rin</th>
-              <th className="px-4 py-3">Ism-Familiya</th>
-              <th className="px-4 py-3">Sana va Soat</th>
-              <th className="px-4 py-3">Listening</th>
-              <th className="px-4 py-3">Reading</th>
-              <th className="px-4 py-3">Writing Task 1</th>
-              <th className="px-4 py-3">Tab-Cheat</th>
-              <th className="px-4 py-3 text-right">Amallar</th>
+              <th className="px-3.5 py-3">#</th>
+              <th className="px-3.5 py-3">Ism-Familiya</th>
+              <th className="px-3.5 py-3">Sana va Soat</th>
+              <th className="px-3.5 py-3">Listening</th>
+              <th className="px-3.5 py-3">Reading</th>
+              <th className="px-3.5 py-3">Speaking</th>
+              <th className="px-3.5 py-3">Writing</th>
+              <th className="px-3.5 py-3 text-center">Overall</th>
+              <th className="px-3.5 py-3">Tab</th>
+              <th className="px-3.5 py-3 text-right">Amallar</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/80">
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                <td colSpan={10} className="px-4 py-10 text-center text-zinc-500">
                   Natijalar yuklanmoqda...
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-zinc-500">
+                <td colSpan={10} className="px-4 py-10 text-center text-zinc-500">
                   Hozircha topshirilgan Mock imtihon natijalari yo&apos;q.
                 </td>
               </tr>
             ) : (
-              filtered.map((sub, idx) => (
-                <tr
-                  key={sub.id}
-                  data-testid={`mock-result-row-${idx}`}
-                  className="transition hover:bg-[#18181b]/70"
-                >
-                  <td className="px-4 py-3 font-mono font-bold text-white">
-                    <span className="inline-flex items-center gap-1">
-                      {idx === 0 && <Trophy className="h-3.5 w-3.5 text-amber-400" />}
-                      #{idx + 1}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openInspector(sub, "listening")}
-                      className="cursor-pointer text-left font-bold text-white underline-offset-2 hover:underline"
-                    >
-                      {sub.fullName}
-                    </button>
-                    <p className="text-[11px] text-zinc-500">{sub.mockTitle}</p>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-zinc-400">
-                    {new Date(sub.submittedAt).toLocaleString("uz-UZ")}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openInspector(sub, "listening")}
-                      className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] px-2.5 py-1 font-mono font-bold text-white hover:border-zinc-400"
-                    >
-                      Band {sub.listening.band.toFixed(1)}{" "}
-                      <span className="text-zinc-400">
-                        ({sub.listening.rawScore}/40)
+              filtered.map((sub, idx) => {
+                const summary = computeOverallBandSummary(sub);
+                const dt = formatTashkentDateTime(sub.submittedAt);
+                const sessInfo = getSubmissionSessionInfo(sub);
+                return (
+                  <tr
+                    key={sub.id}
+                    data-testid={`mock-result-row-${idx}`}
+                    className="transition hover:bg-[#18181b]/70"
+                  >
+                    <td className="px-3.5 py-3 font-mono font-bold text-white">
+                      <span className="inline-flex items-center gap-1">
+                        {idx === 0 && (
+                          <Trophy className="h-3.5 w-3.5 text-amber-400" />
+                        )}
+                        #{idx + 1}
                       </span>
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openInspector(sub, "reading")}
-                      className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] px-2.5 py-1 font-mono font-bold text-white hover:border-zinc-400"
-                    >
-                      Band {sub.reading.band.toFixed(1)}{" "}
-                      <span className="text-zinc-400">
-                        ({sub.reading.rawScore}/40)
-                      </span>
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      data-testid={`open-writing-grade-${idx}`}
-                      onClick={() => openInspector(sub, "writing")}
-                      className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-semibold text-white hover:border-white"
-                    >
-                      <FileText className="h-3.5 w-3.5 text-zinc-400" />
-                      <span>
-                        {sub.writingBand !== null
-                          ? `Band ${sub.writingBand.toFixed(1)}`
-                          : "Ko'rish / Baholash"}
-                      </span>
-                    </button>
-                  </td>
-                  <td className="px-4 py-3">
-                    {sub.tabSwitchCount === 0 ? (
-                      <span className="font-mono text-zinc-400">0 marta</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded border border-red-900/70 bg-red-950/40 px-2 py-0.5 font-mono font-bold text-red-300">
-                        <ShieldAlert className="h-3 w-3" />
-                        {sub.tabSwitchCount} marta chiqqan
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1.5">
+                    </td>
+                    <td className="px-3.5 py-3">
                       <button
                         type="button"
-                        onClick={() => downloadSubmissionPdfReport(sub)}
-                        title="Download PDF"
-                        className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] p-1.5 text-zinc-300 hover:border-white hover:text-white"
+                        onClick={() => openInspector(sub, "listening")}
+                        className="cursor-pointer text-left font-bold text-white underline-offset-2 hover:underline"
                       >
-                        <Download className="h-3.5 w-3.5" />
+                        {sub.fullName}
                       </button>
+                      <p className="text-[11px] text-zinc-500">
+                        {sub.mockTitle}
+                      </p>
+                    </td>
+                    <td className="px-3.5 py-3 font-mono text-[11px] text-zinc-300">
+                      <div>{dt.date}</div>
+                      <div className="text-[10px] text-zinc-500">
+                        {dt.time} · Sessiya: {sessInfo.timeLabel}
+                      </div>
+                    </td>
+                    <td className="px-3.5 py-3">
                       <button
                         type="button"
-                        onClick={() => void handleDeleteSubmission(sub.id)}
-                        title="O'chirish"
-                        className="cursor-pointer rounded border border-zinc-800 bg-[#18181b] p-1.5 text-zinc-500 hover:border-red-800 hover:text-red-300"
+                        onClick={() => openInspector(sub, "listening")}
+                        className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] px-2.5 py-1 font-mono font-bold text-white hover:border-zinc-400"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        {sub.listening.band.toFixed(1)}{" "}
+                        <span className="text-zinc-400">
+                          (L{sub.listening.rawScore})
+                        </span>
                       </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+                    </td>
+                    <td className="px-3.5 py-3">
+                      <button
+                        type="button"
+                        onClick={() => openInspector(sub, "reading")}
+                        className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] px-2.5 py-1 font-mono font-bold text-white hover:border-zinc-400"
+                      >
+                        {sub.reading.band.toFixed(1)}{" "}
+                        <span className="text-zinc-400">
+                          (R{sub.reading.rawScore})
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-3.5 py-3">
+                      <select
+                        aria-label={`${sub.fullName} Speaking band`}
+                        data-testid={`speaking-band-select-${idx}`}
+                        disabled={savingRowId === sub.id}
+                        value={
+                          summary.speakingBand !== null
+                            ? summary.speakingBand.toFixed(1)
+                            : ""
+                        }
+                        onChange={(e) =>
+                          void handleQuickSpeakingChange(sub, e.target.value)
+                        }
+                        className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] px-2 py-1 font-mono text-xs font-bold text-white focus:border-white focus:outline-none disabled:opacity-50"
+                      >
+                        {BAND_OPTIONS.map((b) => (
+                          <option key={b} value={b}>
+                            {b === "" ? "—" : b}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-3.5 py-3">
+                      <button
+                        type="button"
+                        data-testid={`open-writing-grade-${idx}`}
+                        onClick={() => openInspector(sub, "writing")}
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1 font-mono text-xs font-semibold text-white hover:border-white"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-zinc-400" />
+                        <span>
+                          {summary.writingBand !== null
+                            ? `${summary.writingBand.toFixed(1)} (T1)`
+                            : "Baholash"}
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-3.5 py-3 text-center">
+                      <span
+                        data-testid={`overall-band-${idx}`}
+                        className="inline-flex min-w-[44px] items-center justify-center rounded-md border border-zinc-600 bg-zinc-900 px-2 py-1 font-mono text-sm font-extrabold text-white"
+                      >
+                        {summary.overall.toFixed(1)}
+                      </span>
+                    </td>
+                    <td className="px-3.5 py-3">
+                      {sub.tabSwitchCount === 0 ? (
+                        <span className="font-mono text-zinc-500">0</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded border border-red-900/70 bg-red-950/40 px-2 py-0.5 font-mono text-[11px] font-bold text-red-300">
+                          <ShieldAlert className="h-3 w-3" />
+                          {sub.tabSwitchCount}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3.5 py-3 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => downloadSubmissionPdfReport(sub)}
+                          title="Shaxsiy PDF hisobot (1-40 tahlil + insho)"
+                          className="cursor-pointer rounded border border-zinc-700 bg-[#18181b] p-1.5 text-zinc-300 hover:border-white hover:text-white"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteSubmission(sub.id)}
+                          title="O'chirish"
+                          className="cursor-pointer rounded border border-zinc-800 bg-[#18181b] p-1.5 text-zinc-500 hover:border-red-800 hover:text-red-300"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -462,14 +962,15 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-[#111113] px-6 py-4">
               <div>
                 <p className="font-mono text-[11px] font-semibold tracking-widest text-zinc-500 uppercase">
-                  OFFICIAL CANDIDATE ANALYSIS
+                  OFFICIAL CANDIDATE ANALYSIS · OVERALL{" "}
+                  {computeOverallBandSummary(selected).overall.toFixed(1)}
                 </p>
                 <h3 className="mt-0.5 text-lg font-bold text-white">
                   {selected.fullName}
                 </h3>
                 <p className="font-mono text-[11px] text-zinc-400">
                   {selected.mockTitle} ·{" "}
-                  {new Date(selected.submittedAt).toLocaleString("uz-UZ")} ·
+                  {formatTashkentDateTime(selected.submittedAt).label} ·
                   Tab-Cheat: {selected.tabSwitchCount} marta
                 </p>
               </div>
@@ -482,7 +983,7 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-white px-3.5 py-2 text-xs font-bold text-zinc-950 hover:bg-zinc-200"
                 >
                   <Download className="h-3.5 w-3.5" />
-                  <span>Download PDF</span>
+                  <span>Shaxsiy PDF</span>
                 </button>
                 <button
                   type="button"
@@ -495,7 +996,7 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
             </div>
 
             {/* Modal Sub-Tabs */}
-            <div className="flex items-center gap-2 border-b border-zinc-800 bg-[#111113] px-6 py-2.5">
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-[#111113] px-6 py-2.5">
               <button
                 type="button"
                 data-testid="inspector-tab-listening"
@@ -532,9 +1033,9 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
                     : "border border-zinc-800 bg-[#18181b] text-zinc-400 hover:text-white"
                 }`}
               >
-                Writing Task 1 (
+                Writing &amp; Speaking (
                 {selected.writingBand !== null
-                  ? `Band ${selected.writingBand.toFixed(1)}`
+                  ? `W ${selected.writingBand.toFixed(1)}`
                   : `${selected.writingTask1WordCount} so'z`}
                 )
               </button>
@@ -586,6 +1087,25 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
                         )}
                       </div>
                     </div>
+
+                    {selected.writingTask2Text && (
+                      <div className="rounded-lg border border-zinc-800 bg-[#141417] p-5">
+                        <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+                          <span className="font-mono text-xs font-bold text-white uppercase">
+                            O&apos;quvchi inshosi (Task 2)
+                          </span>
+                          <span className="font-mono text-xs text-zinc-400">
+                            So&apos;zlar soni:{" "}
+                            <strong className="text-white">
+                              {selected.writingTask2WordCount || 0}
+                            </strong>
+                          </span>
+                        </div>
+                        <div className="mt-3 text-sm leading-7 text-zinc-200 whitespace-pre-wrap">
+                          {selected.writingTask2Text}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Right: Manual Teacher Grading Panel (NO AI!) */}
@@ -595,27 +1115,67 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
                         DOMLA BAHOLASHI (QO&apos;LDA)
                       </p>
                       <p className="mt-1 text-xs text-zinc-400">
-                        AI baholash o&apos;chirilgan. Inshoni o&apos;qib rasmiy Band
-                        ballini va izohingizni saqlang.
+                        AI baholash o&apos;chirilgan. Writing va Speaking
+                        ballarini kiriting — Overall Band va Guruh PDF avtomatik
+                        yangilanadi.
                       </p>
 
-                      <div className="mt-4">
-                        <label className="block text-xs font-semibold text-zinc-300">
-                          Writing Task 1 Band balli
-                        </label>
-                        <select
-                          data-testid="teacher-writing-band-select"
-                          value={writingBandDraft}
-                          onChange={(e) => setWritingBandDraft(e.target.value)}
-                          className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-[#09090b] px-3 py-2.5 font-mono text-sm font-bold text-white focus:border-white focus:outline-none"
-                        >
-                          {BAND_OPTIONS.map((b) => (
-                            <option key={b} value={b}>
-                              {b === "" ? "Baholanmagan" : `Band ${b}`}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300">
+                            Writing Task 1 Band
+                          </label>
+                          <select
+                            data-testid="teacher-writing-band-select"
+                            value={writingBandDraft}
+                            onChange={(e) => setWritingBandDraft(e.target.value)}
+                            className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-[#09090b] px-3 py-2.5 font-mono text-sm font-bold text-white focus:border-white focus:outline-none"
+                          >
+                            {BAND_OPTIONS.map((b) => (
+                              <option key={b} value={b}>
+                                {b === "" ? "Baholanmagan" : `Band ${b}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-zinc-300">
+                            Speaking Band
+                          </label>
+                          <select
+                            data-testid="teacher-speaking-band-select"
+                            value={speakingBandDraft}
+                            onChange={(e) => setSpeakingBandDraft(e.target.value)}
+                            className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-[#09090b] px-3 py-2.5 font-mono text-sm font-bold text-white focus:border-white focus:outline-none"
+                          >
+                            {BAND_OPTIONS.map((b) => (
+                              <option key={b} value={b}>
+                                {b === "" ? "Kiritilmagan" : `Band ${b}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
+
+                      {selected.writingTask2Text && (
+                        <div className="mt-3">
+                          <label className="block text-xs font-semibold text-zinc-300">
+                            Writing Task 2 Band (2x vazn)
+                          </label>
+                          <select
+                            value={writingT2BandDraft}
+                            onChange={(e) => setWritingT2BandDraft(e.target.value)}
+                            className="mt-1.5 w-full rounded-lg border border-zinc-700 bg-[#09090b] px-3 py-2.5 font-mono text-sm font-bold text-white focus:border-white focus:outline-none"
+                          >
+                            {BAND_OPTIONS.map((b) => (
+                              <option key={b} value={b}>
+                                {b === "" ? "Baholanmagan" : `Band ${b}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
 
                       <div className="mt-4">
                         <label className="block text-xs font-semibold text-zinc-300">
@@ -635,16 +1195,16 @@ export function AdminMockResultsTab({ onToast }: AdminMockResultsTabProps) {
                         type="button"
                         data-testid="save-teacher-writing-grade-btn"
                         disabled={savingGrade}
-                        onClick={() => void handleSaveWritingGrade()}
+                        onClick={() => void handleSaveTeacherGrades()}
                         className="mt-4 w-full cursor-pointer rounded-lg bg-white py-2.5 text-xs font-bold text-zinc-950 hover:bg-zinc-200 disabled:opacity-50"
                       >
-                        {savingGrade ? "Saqlanmoqda..." : "Ballni saqlash"}
+                        {savingGrade ? "Saqlanmoqda..." : "Ballarni saqlash"}
                       </button>
 
                       {selected.gradedAt && (
                         <p className="mt-3 font-mono text-[10px] text-zinc-500">
                           Oxirgi baholash:{" "}
-                          {new Date(selected.gradedAt).toLocaleString("uz-UZ")} (
+                          {formatTashkentDateTime(selected.gradedAt).label} (
                           {selected.gradedBy})
                         </p>
                       )}

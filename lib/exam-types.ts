@@ -229,6 +229,7 @@ export interface MockExamConfig {
   startMode: ExamStartMode;
   status: ExamRoomStatus;
   startedAt: string | null;
+  currentSessionId?: string | null;
   writingMode: ExamWritingMode;
   readingDurationSeconds: number; // 3600 = 60:00
   writingDurationSeconds: number; // 1200 = 20:00 for Task 1 only
@@ -287,16 +288,22 @@ export interface ExamSubmissionRecord {
   id: string;
   mockId: string;
   mockTitle: string;
+  sessionId?: string;
+  sessionStartedAt?: string | null;
+  sessionLabel?: string;
   participantId: string;
   fullName: string;
   submittedAt: string;
   tabSwitchCount: number;
   listening: SectionGradeReport;
   reading: SectionGradeReport;
+  speakingBand?: number | null;
   writingTask1Text: string;
   writingTask1WordCount: number;
+  writingTask1Band?: number | null;
   writingTask2Text?: string;
   writingTask2WordCount?: number;
+  writingTask2Band?: number | null;
   writingBand: number | null;
   teacherFeedback: string;
   gradedBy: string | null;

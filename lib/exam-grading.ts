@@ -1,6 +1,7 @@
 import type {
   AnalyticsBucket,
   ExamAnswerItem,
+  ExamSubmissionRecord,
   GradedQuestionDetail,
   SectionGradeReport,
 } from "./exam-types";
@@ -139,5 +140,154 @@ export function gradeExamSection(
     details,
     byPart: toBuckets(partMap),
     byType: toBuckets(typeMap).sort((a, b) => b.wrong - a.wrong),
+  };
+}
+
+export function roundIeltsBand(val: number): number {
+  if (!Number.isFinite(val)) return 0;
+  const clamped = Math.max(0, Math.min(9, val));
+  return Math.floor(clamped * 2 + 0.5) / 2;
+}
+
+export function computeEffectiveWritingBand(
+  sub: Pick<
+    ExamSubmissionRecord,
+    "writingBand" | "writingTask1Band" | "writingTask2Band"
+  >
+): number | null {
+  const t1 =
+    typeof sub.writingTask1Band === "number" && Number.isFinite(sub.writingTask1Band)
+      ? sub.writingTask1Band
+      : null;
+  const t2 =
+    typeof sub.writingTask2Band === "number" && Number.isFinite(sub.writingTask2Band)
+      ? sub.writingTask2Band
+      : null;
+  if (t1 !== null && t2 !== null) {
+    return roundIeltsBand((t1 + 2 * t2) / 3);
+  }
+  if (typeof sub.writingBand === "number" && Number.isFinite(sub.writingBand)) {
+    return roundIeltsBand(sub.writingBand);
+  }
+  if (t1 !== null) return roundIeltsBand(t1);
+  if (t2 !== null) return roundIeltsBand(t2);
+  return null;
+}
+
+export function computeOverallBandSummary(sub: ExamSubmissionRecord): {
+  overall: number;
+  skillCount: number;
+  isFull4Skill: boolean;
+  writingBand: number | null;
+  speakingBand: number | null;
+} {
+  const writingBand = computeEffectiveWritingBand(sub);
+  const speakingBand =
+    typeof sub.speakingBand === "number" && Number.isFinite(sub.speakingBand)
+      ? roundIeltsBand(sub.speakingBand)
+      : null;
+
+  const scores: number[] = [sub.listening.band, sub.reading.band];
+  if (writingBand !== null) scores.push(writingBand);
+  if (speakingBand !== null) scores.push(speakingBand);
+
+  const avg = scores.reduce((acc, v) => acc + v, 0) / scores.length;
+  return {
+    overall: roundIeltsBand(avg),
+    skillCount: scores.length,
+    isFull4Skill: scores.length === 4,
+    writingBand,
+    speakingBand,
+  };
+}
+
+export function compareSubmissionsForRank(
+  a: ExamSubmissionRecord,
+  b: ExamSubmissionRecord
+): number {
+  const sa = computeOverallBandSummary(a);
+  const sb = computeOverallBandSummary(b);
+  if (sb.overall !== sa.overall) return sb.overall - sa.overall;
+  const rawA = a.listening.rawScore + a.reading.rawScore;
+  const rawB = b.listening.rawScore + b.reading.rawScore;
+  if (rawB !== rawA) return rawB - rawA;
+  const lrA = a.listening.band + a.reading.band;
+  const lrB = b.listening.band + b.reading.band;
+  if (lrB !== lrA) return lrB - lrA;
+  const spA = sa.speakingBand ?? -1;
+  const spB = sb.speakingBand ?? -1;
+  if (spB !== spA) return spB - spA;
+  const wrA = sa.writingBand ?? -1;
+  const wrB = sb.writingBand ?? -1;
+  if (wrB !== wrA) return wrB - wrA;
+  return a.fullName.localeCompare(b.fullName);
+}
+
+export function formatTashkentDateTime(iso: string): {
+  date: string;
+  time: string;
+  label: string;
+  dayKey: string;
+  hourKey: string;
+} {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return {
+      date: "—",
+      time: "—",
+      label: "Sana noma'lum",
+      dayKey: "unknown",
+      hourKey: "unknown",
+    };
+  }
+  // Tashkent is UTC+5 year-round (no DST)
+  const tzMs = d.getTime() + 5 * 60 * 60 * 1000;
+  const td = new Date(tzMs);
+  const yyyy = td.getUTCFullYear();
+  const mm = String(td.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(td.getUTCDate()).padStart(2, "0");
+  const hh = String(td.getUTCHours()).padStart(2, "0");
+  const min = String(td.getUTCMinutes()).padStart(2, "0");
+  return {
+    date: `${dd}.${mm}.${yyyy}`,
+    time: `${hh}:${min}`,
+    label: `${dd}.${mm}.${yyyy} · ${hh}:${min}`,
+    dayKey: `${yyyy}-${mm}-${dd}`,
+    hourKey: `${yyyy}-${mm}-${dd}_${hh}`,
+  };
+}
+
+export function getSubmissionSessionInfo(sub: ExamSubmissionRecord): {
+  sessionKey: string;
+  sessionLabel: string;
+  dateLabel: string;
+  timeLabel: string;
+  sortTs: number;
+  mockTitle: string;
+} {
+  const refIso = sub.sessionStartedAt || sub.submittedAt;
+  const dt = formatTashkentDateTime(refIso);
+  const sortTs = Number.isFinite(new Date(refIso).getTime())
+    ? new Date(refIso).getTime()
+    : 0;
+
+  if (sub.sessionId && sub.sessionId.trim()) {
+    return {
+      sessionKey: sub.sessionId.trim(),
+      sessionLabel: sub.sessionLabel?.trim() || dt.label,
+      dateLabel: dt.date,
+      timeLabel: dt.time,
+      sortTs,
+      mockTitle: sub.mockTitle,
+    };
+  }
+
+  return {
+    sessionKey: `${sub.mockId}__${dt.hourKey}`,
+    sessionLabel: `${dt.date} · ${dt.time.slice(0, 2)}:00`,
+    dateLabel: dt.date,
+    timeLabel: `${dt.time.slice(0, 2)}:00`,
+    sortTs,
+    mockTitle: sub.mockTitle,
   };
 }

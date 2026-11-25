@@ -160,10 +160,13 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.action === "start_all") {
+      const nowIso = new Date().toISOString();
+      const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const updated = await saveMockExam({
         ...mock,
         status: "started",
-        startedAt: new Date().toISOString(),
+        startedAt: nowIso,
+        currentSessionId: sessionId,
       });
       return NextResponse.json({ ok: true, mock: updated });
     }
@@ -174,6 +177,7 @@ export async function PATCH(req: NextRequest) {
         ...mock,
         status: "waiting",
         startedAt: null,
+        currentSessionId: null,
       });
       return NextResponse.json({ ok: true, mock: updated });
     }

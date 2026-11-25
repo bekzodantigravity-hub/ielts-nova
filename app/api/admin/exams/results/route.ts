@@ -5,15 +5,26 @@ import {
 } from "@/lib/auth-token";
 import {
   deleteExamSubmission,
+  getExamStorageMode,
   listExamSubmissions,
+  syncExamSubmissions,
   updateSubmissionWritingGrade,
 } from "@/lib/exam-db";
+import type { ExamSubmissionRecord } from "@/lib/exam-types";
 
 export const dynamic = "force-dynamic";
 
 async function requireAdmin(req: NextRequest) {
   const token = req.cookies.get(ADMIN_SESSION_COOKIE_NAME)?.value;
   return verifyAdminToken(token);
+}
+
+function parseOptionalBand(raw: unknown): number | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") return null;
+  const num = Number(raw);
+  if (Number.isNaN(num)) return null;
+  return Math.max(0, Math.min(9, num));
 }
 
 export async function GET(req: NextRequest) {
@@ -26,10 +37,45 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const mockId = searchParams.get("mockId")?.trim() || undefined;
     const submissions = await listExamSubmissions(mockId);
-    return NextResponse.json({ ok: true, submissions });
+    return NextResponse.json({
+      ok: true,
+      submissions,
+      storageMode: getExamStorageMode(),
+    });
   } catch {
     return NextResponse.json(
       { error: "Natijalarni yuklashda xatolik." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const admin = await requireAdmin(req);
+  if (!admin) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const body = (await req.json()) as {
+      action?: "sync";
+      submissions?: ExamSubmissionRecord[];
+    };
+    if (body.action === "sync" && Array.isArray(body.submissions)) {
+      const merged = await syncExamSubmissions(body.submissions);
+      return NextResponse.json({
+        ok: true,
+        submissions: merged,
+        storageMode: getExamStorageMode(),
+      });
+    }
+    return NextResponse.json(
+      { error: "Noto'g'ri so'rov turi." },
+      { status: 400 }
+    );
+  } catch {
+    return NextResponse.json(
+      { error: "Natijalarni sinxronlashda xatolik." },
       { status: 500 }
     );
   }
@@ -45,7 +91,11 @@ export async function PATCH(req: NextRequest) {
     const body = (await req.json()) as {
       id?: string;
       writingBand?: number | null;
+      writingTask1Band?: number | null;
+      writingTask2Band?: number | null;
+      speakingBand?: number | null;
       teacherFeedback?: string;
+      fallbackRecord?: ExamSubmissionRecord;
     };
 
     const id = (body.id || "").trim();
@@ -56,17 +106,18 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const writingBand =
-      body.writingBand === null || body.writingBand === undefined
-        ? null
-        : Math.max(0, Math.min(9, Number(body.writingBand)));
-
     const updated = await updateSubmissionWritingGrade({
       id,
-      writingBand:
-        writingBand !== null && !Number.isNaN(writingBand) ? writingBand : null,
-      teacherFeedback: (body.teacherFeedback || "").trim(),
+      writingBand: parseOptionalBand(body.writingBand),
+      writingTask1Band: parseOptionalBand(body.writingTask1Band),
+      writingTask2Band: parseOptionalBand(body.writingTask2Band),
+      speakingBand: parseOptionalBand(body.speakingBand),
+      teacherFeedback:
+        body.teacherFeedback !== undefined
+          ? body.teacherFeedback.trim()
+          : undefined,
       gradedBy: admin.email,
+      fallbackRecord: body.fallbackRecord,
     });
 
     if (!updated) {
@@ -79,7 +130,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true, submission: updated });
   } catch {
     return NextResponse.json(
-      { error: "Writing bahosini saqlashda xatolik." },
+      { error: "Bahoni saqlashda xatolik." },
       { status: 500 }
     );
   }
