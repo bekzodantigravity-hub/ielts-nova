@@ -261,9 +261,9 @@ export function ListeningStage({
           </p>
         </div>
 
-        {/* Live Audio Status + Volume ONLY (NO Start Listening button, NO pause/seek!) */}
+        {/* Volume ONLY (and 2:00 review countdown when all 4 parts finish) */}
         <div className="flex flex-wrap items-center gap-3">
-          {transferSecondsLeft !== null ? (
+          {transferSecondsLeft !== null && (
             <span
               data-testid="listening-transfer-banner"
               className={`rounded-md border px-3 py-1 font-mono text-xs font-bold ${
@@ -274,25 +274,6 @@ export function ListeningStage({
             >
               Audio tugadi · Tekshirish vaqti: {formatMMSS(transferSecondsLeft)}
             </span>
-          ) : (
-            <div
-              data-testid="listening-audio-status"
-              className={`flex items-center gap-2 rounded-md border px-3 py-1 font-mono text-[11px] ${
-                isDark
-                  ? "border-[#284773] bg-[#091529] text-[#cbd5e1]"
-                  : "border-[#d1d5db] bg-white text-[#374151]"
-              }`}
-            >
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  isPlaying ? "animate-pulse bg-red-500" : "bg-amber-500"
-                }`}
-              />
-              <span>
-                Part {audioPartIndex + 1}/4 · {formatMMSS(displayTime)} /{" "}
-                {formatMMSS(audioDuration)}
-              </span>
-            </div>
           )}
 
           {/* Volume Control */}
